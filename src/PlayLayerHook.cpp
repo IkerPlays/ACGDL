@@ -42,6 +42,7 @@ namespace {
         int totalFails = 0;
         bool died = false;
         bool simDone = false;
+        int deathStep = 0;
 
         // mutaciones
         int mutLeft = 0;
@@ -49,6 +50,11 @@ namespace {
         int mutDelay = 4;
         int pulseLeft = 0;
         bool mutFlip = false;
+        int mutBase = 0;
+        std::vector<std::pair<int, int>> sched; // (inicio, duracion) relativos a mutBase
+        int perP = 8;
+        int perD = 4;
+        int perPhase = 0;
         std::deque<uint8_t> hist;
         uint32_t rng = 0x9E3779B9u;
 
@@ -329,6 +335,20 @@ class $modify(ACPlayLayer, PlayLayer) {
                 if (!g.died) {
                     g.died = true;
                     g.deathX = m_player1 ? m_player1->getPositionX() : 0.f;
+                    g.deathStep = g.step;
+                    if (m_player1) {
+                        auto p = m_player1;
+                        char const* mode = p->m_isDart ? "wave" : p->m_isShip ? "nave" : p->m_isBird ? "ufo"
+                            : p->m_isBall ? "bola" : p->m_isRobot ? "robot" : p->m_isSpider ? "spider"
+                            : p->m_isSwing ? "swing" : "cubo";
+                        acgdl::stats().diag = fmt::format(
+                            "Ultimo fallo: {} x={} y={} vel={:.1f} | objeto id {} tipo {}",
+                            mode, static_cast<int>(g.deathX), static_cast<int>(p->getPositionY()),
+                            p->m_playerSpeed,
+                            object ? object->m_objectID : -1,
+                            object ? static_cast<int>(object->m_objectType) : -1
+                        );
+                    }
                 }
                 return;
             }
@@ -384,12 +404,33 @@ class $modify(ACBase, GJBaseGameLayer) {
         pl->resetLevel();
 
         // otra forma de resolver el tramo
+        int len = std::max(0, g.deathStep - target);
         int back = std::min(g.fails / 6, 16);
-        g.mutType = static_cast<int>(nextRand() % 5);
-        g.mutLeft = 160 + back * 40 + static_cast<int>(nextRand() % 300);
+        g.mutBase = target;
+        g.mutType = static_cast<int>(nextRand() % 10);
         g.mutFlip = false;
         g.pulseLeft = 0;
         g.mutDelay = 4 + static_cast<int>(nextRand() % 25);
+
+        if (g.mutType >= 5 && g.mutType <= 7) {
+            // programa de pulsaciones: 1-4 pulsaciones en la ventana hasta el punto de fallo
+            g.mutLeft = std::clamp(len + 40, 100, 1200) + static_cast<int>(nextRand() % 80);
+            g.sched.clear();
+            int n = 1 + static_cast<int>(nextRand() % 4);
+            for (int i = 0; i < n; i++) {
+                int start = static_cast<int>(nextRand() % static_cast<uint32_t>(len + 20));
+                int dur = 2 + static_cast<int>(nextRand() % 40);
+                g.sched.emplace_back(start, dur);
+            }
+        } else if (g.mutType >= 8) {
+            // patron periodico de mantener/soltar (util en nave y wave)
+            g.mutLeft = std::clamp(len + 40, 100, 1200) + static_cast<int>(nextRand() % 80);
+            g.perP = 4 + static_cast<int>(nextRand() % 56);
+            g.perD = 1 + static_cast<int>(nextRand() % static_cast<uint32_t>(g.perP - 1));
+            g.perPhase = static_cast<int>(nextRand() % static_cast<uint32_t>(g.perP));
+        } else {
+            g.mutLeft = 160 + back * 40 + static_cast<int>(nextRand() % 300);
+        }
     }
 
     void simStep(PlayLayer* pl) {
@@ -448,6 +489,22 @@ class $modify(ACBase, GJBaseGameLayer) {
                         g.pulseLeft = 4 + static_cast<int>(nextRand() % 50);
                     }
                     break;
+                case 5:
+                case 6:
+                case 7: {
+                    int t = g.step - g.mutBase;
+                    want = false;
+                    for (auto const& pr : g.sched) {
+                        if (t >= pr.first && t < pr.first + pr.second) want = true;
+                    }
+                    break;
+                }
+                case 8:
+                case 9: {
+                    int t = g.step - g.mutBase + g.perPhase;
+                    want = (t % g.perP) < g.perD;
+                    break;
+                }
                 default:
                     break;
             }

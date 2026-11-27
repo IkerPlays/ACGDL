@@ -12,6 +12,7 @@ namespace acgdl {
         cocos2d::CCLabelBMFont* m_status = nullptr;
         cocos2d::CCLabelBMFont* m_stats = nullptr;
         cocos2d::CCLabelBMFont* m_info = nullptr;
+        cocos2d::CCLabelBMFont* m_diag = nullptr;
         int m_dots = 0;
 
         bool init();

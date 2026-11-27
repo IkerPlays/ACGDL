@@ -54,17 +54,22 @@ namespace acgdl {
         m_info->setOpacity(150);
         m_mainLayer->addChildAtPosition(m_info, Anchor::Center, {0.f, -62.f});
 
+        m_diag = CCLabelBMFont::create("", "chatFont.fnt");
+        m_diag->setScale(0.6f);
+        m_diag->setColor({255, 190, 90});
+        m_mainLayer->addChildAtPosition(m_diag, Anchor::Center, {0.f, -80.f});
+
         auto skipSpr = ButtonSprite::create("Saltar", "goldFont.fnt", "GJ_button_04.png", 0.7f);
         auto skip = Button::createWithNode(skipSpr, [](Button*) {
             stats().skipRequested = true;
         });
-        m_mainLayer->addChildAtPosition(skip, Anchor::Center, {-70.f, -92.f});
+        m_mainLayer->addChildAtPosition(skip, Anchor::Center, {-70.f, -112.f});
 
         auto cancelSpr = ButtonSprite::create("Apagar bot", "goldFont.fnt", "GJ_button_06.png", 0.7f);
         auto cancel = Button::createWithNode(cancelSpr, [](Button*) {
             stats().cancelRequested = true;
         });
-        m_mainLayer->addChildAtPosition(cancel, Anchor::Center, {70.f, -92.f});
+        m_mainLayer->addChildAtPosition(cancel, Anchor::Center, {70.f, -112.f});
 
         this->schedule(schedule_selector(LoadingPopup::tick), 0.05f);
         return true;
@@ -85,6 +90,7 @@ namespace acgdl {
         std::string dots(static_cast<size_t>(m_dots / 15), '.');
         m_status->setString(("Cargando" + dots).c_str());
 
+        m_diag->setString(st.diag.c_str());
         m_stats->setString(fmt::format(
             "Reintentos: {}   |   Puntos de control: {}",
             st.attempts, st.checkpoints

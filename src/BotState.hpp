@@ -18,6 +18,7 @@ namespace acgdl {
         bool cancelRequested = false; // apagar el bot en este nivel
         bool resolveRequested = false; // volver a resolver el nivel
         std::string info;             // resumen del nivel
+        std::string diag;             // ultimo fallo: modo de juego y objeto que mata
     };
 
     BotStats& stats();
