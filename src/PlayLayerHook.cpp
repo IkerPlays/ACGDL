@@ -21,7 +21,7 @@ namespace {
     // SIEMPRE este paso fijo, asi la solucion se reproduce igual.
     constexpr float STEP = 1.f / 240.f;
 
-    enum Phase { PH_OFF = 0, PH_SOLVE = 1, PH_PLAY = 2, PH_LIVE = 3, PH_WAIT = 4 };
+    enum Phase { PH_OFF = 0, PH_SOLVE = 1, PH_PLAY = 2, PH_LIVE = 3, PH_WAIT = 4, PH_REPLAY = 5 };
 
     struct Run {
         acgdl::LevelData data;
@@ -65,6 +65,11 @@ namespace {
 
         // frames sin llamar a la fisica tras reiniciar el nivel (deja que el juego termine de armarse)
         int settle = 0;
+
+        // verificacion desde cero
+        int replayUntil = 0;
+        bool verifyFull = false;
+        int verifyFails = 0;
     };
 
     Run g;
@@ -135,7 +140,7 @@ namespace {
 
     void leaveBot(PlayLayer* pl) {
         auto& st = acgdl::stats();
-        bool wasSolving = g.phase == PH_SOLVE;
+        bool wasSolving = g.phase == PH_SOLVE || g.phase == PH_REPLAY;
         g.phase = PH_OFF;
         st.phase = PH_OFF;
         mute(false);
@@ -179,10 +184,59 @@ namespace {
         pl->resetLevelFromStart();
 
         g.settle = 4;
+        g.replayUntil = 0;
+        g.verifyFull = false;
+        g.verifyFails = 0;
         log::info("[AutoComplete] solver iniciado");
         if (auto popup = acgdl::LoadingPopup::create()) {
             popup->show();
         }
+    }
+
+    // Repite desde cero (con los mismos pasos fijos) las primeras `until` entradas.
+    // Si until == total, es una verificacion completa de la solucion.
+    void startReplay(PlayLayer* pl, int until, bool full) {
+        auto& st = acgdl::stats();
+        bool wasLoading = st.phase == PH_SOLVE;
+        g.phase = PH_REPLAY;
+        st.phase = PH_SOLVE;
+        g.replayUntil = until;
+        g.verifyFull = full;
+        g.step = 0;
+        g.cpStep.clear();
+        g.hist.clear();
+        g.lastCpX = -1000.f;
+        g.failX = -1.f;
+        g.fails = 0;
+        g.mutLeft = 0;
+        g.died = false;
+        g.simDone = false;
+        g.finished = false;
+        g.holding = false;
+        g.mem.reset();
+
+        mute(true);
+        pl->removeAllCheckpoints();
+        pl->resetLevelFromStart();
+        g.settle = 3;
+        log::info("[AutoComplete] repeticion desde cero: {} pasos (completa: {})", until, full);
+
+        if (!wasLoading) {
+            if (auto popup = acgdl::LoadingPopup::create()) popup->show();
+        }
+    }
+
+    // La repeticion desde cero fallo en el paso k: se conserva lo verificado antes y se resuelve de nuevo desde ahi.
+    void repair(PlayLayer* pl, int k) {
+        g.verifyFails++;
+        if (g.verifyFails > 80) {
+            goLive(pl);
+            return;
+        }
+        int back = 360 + 120 * std::min(g.verifyFails, 12);
+        int keep = std::clamp(k - back, 0, static_cast<int>(g.inputs.size()));
+        g.inputs.resize(static_cast<size_t>(keep));
+        startReplay(pl, keep, false);
     }
 
     // La solucion ya esta: se ejecuta de verdad desde el principio.
@@ -197,10 +251,16 @@ namespace {
         g.acc = 0.0;
         g.holding = false;
         g.playDeaths = 0;
+        g.died = false;
+        g.simDone = false;
+        g.cpStep.clear();
+        g.lastCpX = -1000.f;
         g.mem.reset();
-        restartClean(pl);
+        // se ejecuta en el MISMO modo (practica) y con las mismas condiciones que la verificacion
+        pl->removeAllCheckpoints();
+        pl->resetLevelFromStart();
         g.settle = 4;
-        log::info("[AutoComplete] solucion lista: {} pasos, {} reintentos", g.inputs.size(), g.totalFails);
+        log::info("[AutoComplete] solucion verificada: {} pasos, {} reintentos", g.inputs.size(), g.totalFails);
 
         Notification::create(
             fmt::format("Solucion lista ({} pasos). Ejecutando...", g.inputs.size()),
@@ -251,8 +311,8 @@ class $modify(ACPlayLayer, PlayLayer) {
         g.holding = false;
         g.mem.reset();
 
-        if (g.phase == PH_SOLVE) {
-            g.lastCpX = m_player1 ? m_player1->getPositionX() : -1000.f;
+        g.lastCpX = m_player1 ? m_player1->getPositionX() : -1000.f;
+        if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
             auto fmod = FMODAudioEngine::sharedEngine();
             if (fmod) fmod->pauseAllMusic(true);
         } else {
@@ -265,20 +325,19 @@ class $modify(ACPlayLayer, PlayLayer) {
     // Durante la resolucion no se "muere": el solver rebobina. Ejecutando, se cuentan los fallos.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         if (g.phase != PH_OFF && object != m_anticheatSpike) {
-            if (g.phase == PH_SOLVE) {
+            if (g.phase == PH_SOLVE || g.phase == PH_REPLAY || g.phase == PH_PLAY) {
                 if (!g.died) {
                     g.died = true;
                     g.deathX = m_player1 ? m_player1->getPositionX() : 0.f;
                 }
                 return;
             }
-            if (g.phase == PH_PLAY) g.playDeaths++;
         }
         PlayLayer::destroyPlayer(player, object);
     }
 
     void levelComplete() {
-        if (g.phase == PH_SOLVE) {
+        if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
             g.simDone = true;
             return;
         }
@@ -292,7 +351,7 @@ class $modify(ACPlayLayer, PlayLayer) {
     }
 
     void onQuit() {
-        if (g.phase == PH_SOLVE) mute(false);
+        if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) mute(false);
         g.phase = PH_OFF;
         acgdl::stats().phase = PH_OFF;
         acgdl::stats().inLevel = false;
@@ -401,15 +460,66 @@ class $modify(ACBase, GJBaseGameLayer) {
         g.step++;
 
         if (g.simDone) {
-            finishSolve(pl);
+            // solucion encontrada: se verifica repitiendola entera desde cero
+            startReplay(pl, static_cast<int>(g.inputs.size()), true);
         } else if (g.step > 240 * 1200 || g.totalFails > 40000) {
             goLive(pl);
         }
     }
 
+    // ---- un paso de repeticion desde cero ----
+    void replayStep(PlayLayer* pl) {
+        auto p = pl->m_player1;
+        if (!p) {
+            GJBaseGameLayer::update(STEP);
+            return;
+        }
+        if (g.died) {
+            g.died = false;
+            repair(pl, g.step);
+            return;
+        }
+        if (g.simDone) {
+            finishSolve(pl);
+            return;
+        }
+        if (g.step >= g.replayUntil) {
+            if (g.verifyFull) {
+                repair(pl, g.step); // se acabaron los pasos y no se completo
+            } else {
+                // prefijo reproducido: seguir buscando desde este punto
+                g.phase = PH_SOLVE;
+                g.mem.reset();
+                g.mutLeft = 0;
+                g.fails = 0;
+                g.failX = -1.f;
+            }
+            return;
+        }
+
+        float px = p->getPositionX();
+        g.bestX = std::max(g.bestX, px);
+        if (px - g.lastCpX >= 45.f && !g.holding && !p->m_isDead && g.step > 0) {
+            if (pl->markCheckpoint()) g.cpStep.push_back(g.step);
+            g.lastCpX = px;
+        }
+
+        setHold(pl, g.inputs[static_cast<size_t>(g.step)] != 0);
+        GJBaseGameLayer::update(STEP);
+        g.step++;
+    }
+
     // ---- un paso de ejecucion (solucion o en directo) ----
     void playStep(PlayLayer* pl) {
         auto p = pl->m_player1;
+        if (p && g.phase == PH_PLAY && !p->m_isDead) {
+            // mismas condiciones que la repeticion de verificacion (checkpoints incluidos)
+            float px = p->getPositionX();
+            if (px - g.lastCpX >= 45.f && !g.holding && g.step > 0) {
+                pl->markCheckpoint();
+                g.lastCpX = px;
+            }
+        }
         if (p && !p->m_isDead) {
             bool want = false;
             if (g.phase == PH_PLAY) {
@@ -456,7 +566,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
         if (st.skipRequested) {
             st.skipRequested = false;
-            if (g.phase == PH_SOLVE) goLive(pl);
+            if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) goLive(pl);
         }
         if (st.resolveRequested) {
             st.resolveRequested = false;
@@ -465,15 +575,10 @@ class $modify(ACBase, GJBaseGameLayer) {
             beginSolve(pl);
         }
 
-        // la solucion fallo al ejecutarla: se vuelve a resolver (hasta 3 veces) o se juega en directo
-        if (g.phase == PH_PLAY && g.playDeaths >= 2) {
-            if (g.resolves < 3) {
-                g.resolves++;
-                st.resolves = g.resolves;
-                beginSolve(pl);
-            } else {
-                goLive(pl);
-            }
+        // la ejecucion fallo: se repara solo el tramo malo (el resto ya esta verificado)
+        if (g.phase == PH_PLAY && g.died) {
+            g.died = false;
+            repair(pl, g.step);
         }
 
         if (g.finished) {
@@ -487,14 +592,15 @@ class $modify(ACBase, GJBaseGameLayer) {
             return;
         }
 
-        if (g.phase == PH_SOLVE) {
+        if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
             auto t0 = std::chrono::steady_clock::now();
             do {
-                this->simStep(pl);
-            } while (g.phase == PH_SOLVE &&
+                if (g.phase == PH_REPLAY) this->replayStep(pl);
+                else this->simStep(pl);
+            } while ((g.phase == PH_SOLVE || g.phase == PH_REPLAY) &&
                      std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 0.012);
 
-            if (g.phase == PH_SOLVE) {
+            if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
                 st.percent = std::clamp(g.bestX / std::max(1.f, g.data.endX) * 100.f, 0.f, 100.f);
                 st.attempts = g.totalFails;
                 st.checkpoints = static_cast<int>(g.cpStep.size());
