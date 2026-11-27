@@ -21,7 +21,7 @@ namespace {
     // SIEMPRE este paso fijo, asi la solucion se reproduce igual.
     constexpr float STEP = 1.f / 240.f;
 
-    enum Phase { P_OFF = 0, P_SOLVE = 1, P_PLAY = 2, P_LIVE = 3 };
+    enum Phase { P_OFF = 0, P_SOLVE = 1, P_PLAY = 2, P_LIVE = 3, P_WAIT = 4 };
 
     struct Run {
         acgdl::LevelData data;
@@ -58,6 +58,10 @@ namespace {
         int resolves = 0;
         float savedSfx = 1.f;
         bool muted = false;
+
+        // espera a que el juego haya arrancado de verdad
+        bool startReady = false;
+        int waitFrames = 0;
     };
 
     Run g;
@@ -212,7 +216,8 @@ class $modify(ACPlayLayer, PlayLayer) {
         if (!botOn()) return;
 
         if (searchOn()) {
-            beginSolve(this);
+            // se resuelve cuando el juego haya arrancado (ver startGame / update)
+            g.phase = P_WAIT;
         } else {
             g.phase = P_LIVE;
             st.phase = P_LIVE;
@@ -223,9 +228,14 @@ class $modify(ACPlayLayer, PlayLayer) {
         }
     }
 
+    void startGame() {
+        PlayLayer::startGame();
+        if (g.phase == P_WAIT) g.startReady = true;
+    }
+
     void resetLevel() {
         PlayLayer::resetLevel();
-        if (g.phase == P_OFF) return;
+        if (g.phase == P_OFF || g.phase == P_WAIT) return;
 
         this->handleButton(false, 1, true);
         g.holding = false;
@@ -413,6 +423,19 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
 
         auto& st = acgdl::stats();
+
+        // esperando a que el nivel arranque: el juego corre normal unos frames
+        if (g.phase == P_WAIT) {
+            GJBaseGameLayer::update(dt);
+            if (!botOn()) {
+                g.phase = P_OFF;
+                return;
+            }
+            if (g.startReady && ++g.waitFrames > 20) {
+                beginSolve(pl);
+            }
+            return;
+        }
 
         // peticiones del panel / pantalla de carga
         if (!botOn() || st.cancelRequested) {
