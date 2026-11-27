@@ -1,195 +1,475 @@
 #include <Geode/Geode.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/ui/Notification.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <deque>
 #include <vector>
 
 #include "AutoPlayer.hpp"
 #include "BotState.hpp"
 #include "LevelScanner.hpp"
+#include "LoadingPopup.hpp"
 
 using namespace geode::prelude;
 
-static bool botOn() {
-    return Mod::get()->getSettingValue<bool>("auto-play");
-}
+namespace {
 
-static bool searchOn() {
-    return Mod::get()->getSettingValue<bool>("rewind");
+    // Un paso de fisica = 1/240 s. Tanto el solver como la ejecucion usan
+    // SIEMPRE este paso fijo, asi la solucion se reproduce igual.
+    constexpr float STEP = 1.f / 240.f;
+
+    enum Phase { P_OFF = 0, P_SOLVE = 1, P_PLAY = 2, P_LIVE = 3 };
+
+    struct Run {
+        acgdl::LevelData data;
+        int phase = P_OFF;
+        acgdl::BotMemory mem;
+        bool holding = false;
+        bool finished = false;
+        int step = 0;
+
+        // solver
+        std::vector<uint8_t> inputs;
+        std::vector<int> cpStep;
+        float lastCpX = -1000.f;
+        float failX = -1.f;
+        float deathX = 0.f;
+        float bestX = 0.f;
+        int fails = 0;
+        int totalFails = 0;
+        bool died = false;
+        bool simDone = false;
+
+        // mutaciones
+        int mutLeft = 0;
+        int mutType = 0;
+        int mutDelay = 4;
+        int pulseLeft = 0;
+        bool mutFlip = false;
+        std::deque<uint8_t> hist;
+        uint32_t rng = 0x9E3779B9u;
+
+        // ejecucion
+        double acc = 0.0;
+        int playDeaths = 0;
+        int resolves = 0;
+        float savedSfx = 1.f;
+        bool muted = false;
+    };
+
+    Run g;
+
+    bool botOn() { return Mod::get()->getSettingValue<bool>("auto-play"); }
+    bool searchOn() { return Mod::get()->getSettingValue<bool>("rewind"); }
+    bool safeOn() { return Mod::get()->getSettingValue<bool>("safe-mode"); }
+
+    uint32_t nextRand() {
+        g.rng ^= g.rng << 13;
+        g.rng ^= g.rng >> 17;
+        g.rng ^= g.rng << 5;
+        return g.rng;
+    }
+    float rand01() { return (nextRand() & 0xFFFFFF) / 16777216.f; }
+
+    void setHold(PlayLayer* pl, bool v) {
+        if (v != g.holding) {
+            g.holding = v;
+            pl->handleButton(v, 1, true);
+        }
+    }
+
+    // Silencia efectos y musica mientras se resuelve en segundo plano.
+    void mute(bool on) {
+        auto fmod = FMODAudioEngine::sharedEngine();
+        if (!fmod) return;
+        if (on && !g.muted) {
+            g.savedSfx = fmod->m_sfxVolume;
+            g.muted = true;
+        }
+        if (on) {
+            fmod->setEffectsVolume(0.f);
+            fmod->pauseAllMusic(true);
+        } else if (g.muted) {
+            fmod->setEffectsVolume(g.savedSfx);
+            g.muted = false;
+        }
+    }
+
+    void updatePercent(PlayLayer* pl) {
+        if (!pl->m_player1) return;
+        float x = pl->m_player1->getPositionX();
+        acgdl::stats().percent = std::clamp(x / std::max(1.f, g.data.endX) * 100.f, 0.f, 100.f);
+    }
+
+    void restartClean(PlayLayer* pl) {
+        pl->removeAllCheckpoints();
+        pl->togglePracticeMode(false);
+        pl->resetLevelFromStart();
+        if (safeOn()) pl->m_isTestMode = true;
+    }
+
+    // Vuelve a jugar normal en directo (sin solucion previa).
+    void goLive(PlayLayer* pl) {
+        auto& st = acgdl::stats();
+        g.phase = P_LIVE;
+        st.phase = P_LIVE;
+        mute(false);
+        g.step = 0;
+        g.acc = 0.0;
+        g.holding = false;
+        g.mem.reset();
+        restartClean(pl);
+    }
+
+    void leaveBot(PlayLayer* pl) {
+        auto& st = acgdl::stats();
+        bool wasSolving = g.phase == P_SOLVE;
+        g.phase = P_OFF;
+        st.phase = P_OFF;
+        mute(false);
+        if (wasSolving) {
+            pl->removeAllCheckpoints();
+            pl->togglePracticeMode(false);
+            pl->resetLevelFromStart();
+        }
+    }
+
+    // Empieza (o reinicia) la resolucion en segundo plano.
+    void beginSolve(PlayLayer* pl) {
+        auto& st = acgdl::stats();
+        g.phase = P_SOLVE;
+        g.inputs.clear();
+        g.cpStep.clear();
+        g.hist.clear();
+        g.lastCpX = -1000.f;
+        g.failX = -1.f;
+        g.fails = 0;
+        g.totalFails = 0;
+        g.bestX = 0.f;
+        g.step = 0;
+        g.mutLeft = 0;
+        g.died = false;
+        g.simDone = false;
+        g.finished = false;
+        g.holding = false;
+        g.playDeaths = 0;
+        g.mem.reset();
+        g.rng ^= static_cast<uint32_t>(g.resolves * 2654435761u + 12345u);
+
+        st.phase = P_SOLVE;
+        st.percent = 0.f;
+        st.attempts = 0;
+        st.checkpoints = 0;
+        st.steps = 0;
+
+        mute(true);
+        if (!pl->m_isPracticeMode) pl->togglePracticeMode(true);
+        pl->resetLevelFromStart();
+
+        if (auto popup = acgdl::LoadingPopup::create()) {
+            pl->addChild(popup, 100000);
+        }
+    }
+
+    // La solucion ya esta: se ejecuta de verdad desde el principio.
+    void finishSolve(PlayLayer* pl) {
+        auto& st = acgdl::stats();
+        g.phase = P_PLAY;
+        st.phase = P_PLAY;
+        st.steps = static_cast<int>(g.inputs.size());
+        st.percent = 0.f;
+        mute(false);
+        g.step = 0;
+        g.acc = 0.0;
+        g.holding = false;
+        g.playDeaths = 0;
+        g.mem.reset();
+        restartClean(pl);
+
+        Notification::create(
+            fmt::format("Solucion lista ({} pasos). Ejecutando...", g.inputs.size()),
+            NotificationIcon::Success, 3.f
+        )->show();
+    }
+
 }
 
 class $modify(ACPlayLayer, PlayLayer) {
-    struct Fields {
-        acgdl::LevelData data;
-        bool holding = false;
-        bool finished = false;
-        int frame = 0;
-
-        // busqueda con checkpoints de practica
-        float lastCpX = -1000.f;
-        float failX = -1.f;
-        int fails = 0;
-        int mutLeft = 0;
-        int mutType = 0;
-        bool mutFlip = false;
-        int mutDelay = 0;
-        std::deque<bool> hist;
-        uint32_t rng = 0x9E3779B9u;
-
-        uint32_t next() {
-            rng ^= rng << 13;
-            rng ^= rng >> 17;
-            rng ^= rng << 5;
-            return rng;
-        }
-        float rand01() { return (next() & 0xFFFFFF) / 16777216.f; }
-    };
-
-    bool searching() {
-        return botOn() && searchOn() && m_isPracticeMode;
-    }
-
-    void setHold(bool v) {
-        auto f = m_fields.self();
-        if (v != f->holding) {
-            f->holding = v;
-            this->handleButton(v, 1, true);
-        }
-    }
-
-    // Al terminar de cargar el nivel: lo leemos entero.
     void setupHasCompleted() {
         PlayLayer::setupHasCompleted();
 
-        m_fields->data = acgdl::scanLevel(this);
-        acgdl::stats() = acgdl::BotStats();
-        acgdl::stats().inLevel = true;
+        g = Run();
+        auto& st = acgdl::stats();
+        st = acgdl::BotStats();
+        st.inLevel = true;
 
-        // El rebobinado usa el modo practica real del juego (checkpoints oficiales).
-        if (botOn() && searchOn() && !m_isPracticeMode) {
-            this->togglePracticeMode(true);
-        }
+        g.data = acgdl::scanLevel(this);
+        st.info = g.data.summary();
 
-        if (botOn() && Mod::get()->getSettingValue<bool>("show-info")) {
-            Notification::create(
-                m_fields->data.summary(), NotificationIcon::Info, 4.f
-            )->show();
+        if (!botOn()) return;
+
+        if (searchOn()) {
+            beginSolve(this);
+        } else {
+            g.phase = P_LIVE;
+            st.phase = P_LIVE;
+            if (safeOn()) m_isTestMode = true;
+            if (Mod::get()->getSettingValue<bool>("show-info")) {
+                Notification::create(st.info, NotificationIcon::Info, 4.f)->show();
+            }
         }
     }
 
     void resetLevel() {
         PlayLayer::resetLevel();
-        auto f = m_fields.self();
-        f->holding = false;
-        f->frame = 0;
-        f->hist.clear();
-        f->finished = false;
-        f->lastCpX = m_player1 ? m_player1->getPositionX() : -1000.f;
+        if (g.phase == P_OFF) return;
 
-        // tras una muerte: probar otra forma de resolver el tramo
-        if (f->fails > 0) {
-            int back = std::min(f->fails / 4, 16);
-            f->mutType = static_cast<int>(f->next() % 3);
-            f->mutLeft = 50 + back * 14 + static_cast<int>(f->next() % 80);
-            f->mutFlip = false;
-            f->mutDelay = 1 + static_cast<int>(f->next() % 7);
+        this->handleButton(false, 1, true);
+        g.holding = false;
+        g.mem.reset();
+
+        if (g.phase == P_SOLVE) {
+            g.lastCpX = m_player1 ? m_player1->getPositionX() : -1000.f;
+            auto fmod = FMODAudioEngine::sharedEngine();
+            if (fmod) fmod->pauseAllMusic(true);
         } else {
-            f->mutLeft = 0;
+            g.step = 0;
+            g.acc = 0.0;
+            g.finished = false;
         }
     }
 
-    void postUpdate(float dt) {
-        PlayLayer::postUpdate(dt);
-
-        auto f = m_fields.self();
-        if (!f->data.ready || f->finished) return;
-
-        if (!botOn() || !m_player1 || m_player1->m_isDead) {
-            this->setHold(false);
-            return;
-        }
-
-        bool search = this->searching();
-
-        // Modo seguro sin rebobinado: no se guarda nada.
-        if (!search && Mod::get()->getSettingValue<bool>("safe-mode")) {
-            m_isTestMode = true;
-        }
-
-        float px = m_player1->getPositionX();
-        acgdl::stats().progressX = px;
-
-        // si ya pasamos el punto de fallo, se reinicia el contador
-        if (f->failX >= 0.f && px > f->failX + 220.f) {
-            f->fails = 0;
-            f->failX = -1.f;
-        }
-
-        // checkpoint oficial de practica cada ~45 unidades
-        if (search && px - f->lastCpX >= 45.f) {
-            this->markCheckpoint();
-            f->lastCpX = px;
-            acgdl::stats().snapshots = m_checkpointArray ? static_cast<int>(m_checkpointArray->count()) : 0;
-        }
-
-        bool want = acgdl::decideHold(m_player1, f->data, f->frame++);
-
-        f->hist.push_back(want);
-        if (f->hist.size() > 16) f->hist.pop_front();
-
-        if (f->mutLeft > 0) {
-            f->mutLeft--;
-            if (f->mutType == 0) {
-                // alternar la decision en momentos aleatorios
-                if (f->rand01() < 0.05f) f->mutFlip = !f->mutFlip;
-                want = want != f->mutFlip;
-            } else if (f->mutType == 1) {
-                // reaccionar tarde
-                size_t d = static_cast<size_t>(f->mutDelay);
-                if (f->hist.size() > d) want = f->hist[f->hist.size() - 1 - d];
-                else want = false;
-            } else {
-                // no pulsar nada durante un rato
-                want = false;
-            }
-        }
-
-        this->setHold(want);
-    }
-
-    // Cuando el bot muere en practica, el juego vuelve al ultimo checkpoint.
-    // Si falla varias veces seguidas en el mismo punto, se descartan checkpoints para ir mas atras.
+    // Durante la resolucion no se "muere": el solver rebobina. Ejecutando, se cuentan los fallos.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
-        auto f = m_fields.self();
-        if (this->searching() && f->data.ready && !f->finished &&
-            m_player1 && !m_player1->m_isDead && object != m_anticheatSpike) {
-            float dx = m_player1->getPositionX();
-            if (f->failX < 0.f || dx > f->failX + 60.f) {
-                f->failX = dx;
-                f->fails = 0;
+        if (g.phase != P_OFF && object != m_anticheatSpike) {
+            if (g.phase == P_SOLVE) {
+                if (!g.died) {
+                    g.died = true;
+                    g.deathX = m_player1 ? m_player1->getPositionX() : 0.f;
+                }
+                return;
             }
-            f->fails++;
-            acgdl::stats().rewinds++;
-
-            if (f->fails % 4 == 0 && m_checkpointArray && m_checkpointArray->count() > 1) {
-                m_checkpointArray->removeLastObject();
-            }
-            this->setHold(false);
+            if (g.phase == P_PLAY) g.playDeaths++;
         }
         PlayLayer::destroyPlayer(player, object);
     }
 
     void levelComplete() {
-        auto f = m_fields.self();
-        this->setHold(false);
-        f->finished = true;
+        if (g.phase == P_SOLVE) {
+            g.simDone = true;
+            return;
+        }
+        if (g.phase != P_OFF) {
+            this->handleButton(false, 1, true);
+            g.holding = false;
+            g.finished = true;
+            acgdl::stats().percent = 100.f;
+        }
         PlayLayer::levelComplete();
     }
 
     void onQuit() {
+        if (g.phase == P_SOLVE) mute(false);
+        g.phase = P_OFF;
+        acgdl::stats().phase = P_OFF;
         acgdl::stats().inLevel = false;
         PlayLayer::onQuit();
+    }
+};
+
+class $modify(ACBase, GJBaseGameLayer) {
+    // ---- un paso del solver ----
+    void rollback(PlayLayer* pl) {
+        g.died = false;
+        if (g.failX < 0.f || g.deathX > g.failX + 60.f) {
+            g.failX = g.deathX;
+            g.fails = 0;
+        }
+        g.fails++;
+        g.totalFails++;
+
+        // si sigue fallando en el mismo punto, se descartan checkpoints para ir mas atras
+        if (g.fails % 6 == 0 && !g.cpStep.empty() && pl->m_checkpointArray &&
+            pl->m_checkpointArray->count() > 0) {
+            pl->m_checkpointArray->removeLastObject();
+            g.cpStep.pop_back();
+        }
+
+        int target = g.cpStep.empty() ? 0 : g.cpStep.back();
+        g.step = target;
+        g.inputs.resize(static_cast<size_t>(target));
+        g.hist.clear();
+        pl->resetLevel();
+
+        // otra forma de resolver el tramo
+        int back = std::min(g.fails / 6, 16);
+        g.mutType = static_cast<int>(nextRand() % 5);
+        g.mutLeft = 160 + back * 40 + static_cast<int>(nextRand() % 300);
+        g.mutFlip = false;
+        g.pulseLeft = 0;
+        g.mutDelay = 4 + static_cast<int>(nextRand() % 25);
+    }
+
+    void simStep(PlayLayer* pl) {
+        auto p = pl->m_player1;
+        if (!p) {
+            GJBaseGameLayer::update(STEP);
+            return;
+        }
+        if (g.died) {
+            this->rollback(pl);
+            return;
+        }
+
+        float px = p->getPositionX();
+        g.bestX = std::max(g.bestX, px);
+
+        if (g.failX >= 0.f && px > g.failX + 220.f) {
+            g.fails = 0;
+            g.failX = -1.f;
+        }
+
+        // checkpoint oficial de practica (solo sin boton pulsado, para que el estado se reproduzca igual)
+        if (px - g.lastCpX >= 45.f && !g.holding && !p->m_isDead && g.step > 0) {
+            if (pl->markCheckpoint()) g.cpStep.push_back(g.step);
+            g.lastCpX = px;
+        }
+
+        acgdl::DecideOpts o;
+        o.wasHolding = g.holding;
+        o.ignoreOrbs = g.mutLeft > 0 && g.mutType == 4;
+        bool want = acgdl::decideHold(p, g.data, g.mem, g.step, o);
+
+        g.hist.push_back(want ? 1 : 0);
+        if (g.hist.size() > 64) g.hist.pop_front();
+
+        if (g.mutLeft > 0) {
+            g.mutLeft--;
+            switch (g.mutType) {
+                case 0:
+                    if (rand01() < 0.012f) g.mutFlip = !g.mutFlip;
+                    want = want != g.mutFlip;
+                    break;
+                case 1: {
+                    size_t d = static_cast<size_t>(g.mutDelay);
+                    want = g.hist.size() > d ? g.hist[g.hist.size() - 1 - d] != 0 : false;
+                    break;
+                }
+                case 2:
+                    want = false;
+                    break;
+                case 3:
+                    if (g.pulseLeft > 0) {
+                        g.pulseLeft--;
+                        want = true;
+                    } else if (rand01() < 0.012f) {
+                        g.pulseLeft = 4 + static_cast<int>(nextRand() % 50);
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        setHold(pl, want);
+        g.inputs.push_back(want ? 1 : 0);
+
+        GJBaseGameLayer::update(STEP);
+        g.step++;
+
+        if (g.simDone) {
+            finishSolve(pl);
+        } else if (g.step > 240 * 1200 || g.totalFails > 40000) {
+            goLive(pl);
+        }
+    }
+
+    // ---- un paso de ejecucion (solucion o en directo) ----
+    void playStep(PlayLayer* pl) {
+        auto p = pl->m_player1;
+        if (p && !p->m_isDead) {
+            bool want = false;
+            if (g.phase == P_PLAY) {
+                want = static_cast<size_t>(g.step) < g.inputs.size() && g.inputs[g.step] != 0;
+            } else {
+                acgdl::DecideOpts o;
+                o.wasHolding = g.holding;
+                want = acgdl::decideHold(p, g.data, g.mem, g.step, o);
+            }
+            setHold(pl, want);
+        }
+        GJBaseGameLayer::update(STEP);
+        g.step++;
+    }
+
+    void update(float dt) {
+        auto pl = PlayLayer::get();
+        if (!pl || static_cast<GJBaseGameLayer*>(pl) != this || g.phase == P_OFF || !g.data.ready) {
+            GJBaseGameLayer::update(dt);
+            return;
+        }
+
+        auto& st = acgdl::stats();
+
+        // peticiones del panel / pantalla de carga
+        if (!botOn() || st.cancelRequested) {
+            st.cancelRequested = false;
+            leaveBot(pl);
+            GJBaseGameLayer::update(dt);
+            return;
+        }
+        if (st.skipRequested) {
+            st.skipRequested = false;
+            if (g.phase == P_SOLVE) goLive(pl);
+        }
+        if (st.resolveRequested) {
+            st.resolveRequested = false;
+            g.resolves++;
+            st.resolves = g.resolves;
+            beginSolve(pl);
+        }
+
+        // la solucion fallo al ejecutarla: se vuelve a resolver (hasta 3 veces) o se juega en directo
+        if (g.phase == P_PLAY && g.playDeaths >= 2) {
+            if (g.resolves < 3) {
+                g.resolves++;
+                st.resolves = g.resolves;
+                beginSolve(pl);
+            } else {
+                goLive(pl);
+            }
+        }
+
+        if (g.finished) {
+            GJBaseGameLayer::update(dt);
+            return;
+        }
+
+        if (g.phase == P_SOLVE) {
+            auto t0 = std::chrono::steady_clock::now();
+            do {
+                this->simStep(pl);
+            } while (g.phase == P_SOLVE &&
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 0.012);
+
+            if (g.phase == P_SOLVE) {
+                st.percent = std::clamp(g.bestX / std::max(1.f, g.data.endX) * 100.f, 0.f, 100.f);
+                st.attempts = g.totalFails;
+                st.checkpoints = static_cast<int>(g.cpStep.size());
+                st.steps = g.step;
+            }
+            return; // el tiempo real no mueve el juego mientras se resuelve
+        }
+
+        g.acc += std::min(dt, 0.1f);
+        int n = 0;
+        while (g.acc >= STEP && n++ < 60 && !g.finished) {
+            this->playStep(pl);
+            g.acc -= STEP;
+        }
+        updatePercent(pl);
     }
 };

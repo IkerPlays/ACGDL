@@ -51,6 +51,7 @@ namespace acgdl {
         for (auto obj : CCArrayExt<GameObject*>(layer->m_objects)) {
             if (!obj) continue;
             d.totalObjects++;
+            d.endX = std::max(d.endX, obj->getPositionX());
 
             auto type = obj->m_objectType;
             if (type == GameObjectType::Hazard) {
@@ -78,7 +79,7 @@ namespace acgdl {
 
     std::string LevelData::summary() const {
         return fmt::format(
-            "Nivel leido: {} objetos | {} pinchos | {} bloques | {} orbes | {} pads. Auto-completando...",
+            "Nivel leido: {} objetos | {} pinchos | {} bloques | {} orbes | {} pads",
             totalObjects, hazards.size(), solids.size(), orbs.size(), pads.size()
         );
     }

@@ -1,14 +1,23 @@
 #pragma once
 
+#include <string>
+
 namespace acgdl {
 
-    // Estadisticas compartidas entre el bot y el panel.
+    // Estado compartido entre el bot, la pantalla de carga y el panel.
     struct BotStats {
-        int rewinds = 0;
-        int snapshots = 0;
-        float progressX = 0.f;
+        // 0 = apagado, 1 = resolviendo, 2 = ejecutando solucion, 3 = jugando en directo
+        int phase = 0;
+        float percent = 0.f;     // 0..100
+        int attempts = 0;        // reintentos del solver
+        int checkpoints = 0;
+        int steps = 0;           // pasos de la solucion
+        int resolves = 0;
         bool inLevel = false;
-        bool gaveUp = false;
+        bool skipRequested = false;   // saltar la resolucion y jugar en directo
+        bool cancelRequested = false; // apagar el bot en este nivel
+        bool resolveRequested = false; // volver a resolver el nivel
+        std::string info;             // resumen del nivel
     };
 
     BotStats& stats();

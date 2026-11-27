@@ -18,6 +18,7 @@ namespace acgdl {
         std::vector<Box> pads;    // pads (se activan solos)
         float maxHazardW = 0.f;
         float maxSolidW = 0.f;
+        float endX = 1.f;
         int totalObjects = 0;
         bool ready = false;
 

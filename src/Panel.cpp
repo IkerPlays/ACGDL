@@ -7,53 +7,96 @@ namespace acgdl {
 
     static Panel* s_open = nullptr;
 
-    static void addRow(CCMenu* menu, CCSize size, int row, char const* title, char const* key) {
-        float y = size.height - 62.f - row * 36.f;
+    static char const* phaseName(int p) {
+        switch (p) {
+            case 1: return "Resolviendo el nivel...";
+            case 2: return "Ejecutando solucion";
+            case 3: return "Jugando en directo";
+            default: return "En espera";
+        }
+    }
 
-        auto label = CCLabelBMFont::create(title, "bigFont.fnt");
-        label->setScale(0.42f);
-        label->setAnchorPoint({0.f, 0.5f});
-        label->setPosition({24.f, y});
-        menu->addChild(label);
+    static ccColor3B phaseColor(int p) {
+        switch (p) {
+            case 1: return {255, 200, 60};
+            case 2: return {90, 235, 130};
+            case 3: return {110, 190, 255};
+            default: return {190, 190, 190};
+        }
+    }
 
-        auto on = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
-        auto off = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
+    static void addRow(CCLayer* layer, int row, char const* title, char const* desc, char const* key) {
+        float y = 82.f - row * 46.f;
+
+        auto bg = CCLayerColor::create({0, 0, 0, 70});
+        bg->setContentSize({300.f, 40.f});
+        bg->ignoreAnchorPointForPosition(false);
+        bg->setAnchorPoint({0.5f, 0.5f});
+        layer->addChildAtPosition(bg, Anchor::Center, {0.f, y});
+
+        auto t = CCLabelBMFont::create(title, "bigFont.fnt");
+        t->setScale(0.40f);
+        layer->addChildAtPosition(t, Anchor::Center, {-142.f, y + 9.f}, {0.f, 0.5f});
+
+        auto d = CCLabelBMFont::create(desc, "chatFont.fnt");
+        d->setScale(0.62f);
+        d->setOpacity(170);
+        layer->addChildAtPosition(d, Anchor::Center, {-142.f, y - 9.f}, {0.f, 0.5f});
+
         std::string k = key;
-        auto toggler = CCMenuItemExt::createToggler(on, off, [k](CCMenuItemToggler* t) {
-            // dentro del callback isToggled() aun es el valor anterior
-            Mod::get()->setSettingValue<bool>(k, !t->isToggled());
+        auto toggler = Toggler::createWithStandardSprites(0.75f, [k](Toggler*, bool on) {
+            Mod::get()->setSettingValue<bool>(k, on);
         });
-        toggler->toggle(Mod::get()->getSettingValue<bool>(key));
-        toggler->setPosition({size.width - 38.f, y});
-        menu->addChild(toggler);
+        toggler->setToggled(Mod::get()->getSettingValue<bool>(key));
+        layer->addChildAtPosition(toggler, Anchor::Center, {126.f, y});
     }
 
     bool Panel::init() {
-        if (!Popup::init(310.f, 250.f)) return false;
+        if (!Popup::init(340.f, 310.f)) return false;
         this->setTitle("Auto Complete");
 
-        auto menu = CCMenu::create();
-        menu->setContentSize(m_size);
-        menu->ignoreAnchorPointForPosition(false);
-        menu->setAnchorPoint({0.5f, 0.5f});
-        menu->setPosition(m_size / 2);
-        m_mainLayer->addChild(menu);
+        m_state = CCLabelBMFont::create(phaseName(stats().phase), "bigFont.fnt");
+        m_state->setScale(0.42f);
+        m_state->setColor(phaseColor(stats().phase));
+        m_mainLayer->addChildAtPosition(m_state, Anchor::Center, {0.f, 120.f});
 
-        addRow(menu, m_size, 0, "Auto-completar", "auto-play");
-        addRow(menu, m_size, 1, "Rebobinado (anti-muerte)", "rewind");
-        addRow(menu, m_size, 2, "Resumen del nivel", "show-info");
-        addRow(menu, m_size, 3, "Modo seguro (no guardar)", "safe-mode");
+        addRow(m_mainLayer, 0, "Auto-completar", "El bot juega y resuelve cada nivel al entrar", "auto-play");
+        addRow(m_mainLayer, 1, "Resolver en segundo plano", "Pantalla de carga y luego ejecucion real", "rewind");
+        addRow(m_mainLayer, 2, "Resumen del nivel", "Muestra lo leido: pinchos, orbes, pads...", "show-info");
+        addRow(m_mainLayer, 3, "Modo seguro", "No guarda progreso ni records", "safe-mode");
 
-        auto& st = stats();
-        std::string info = st.inLevel
-            ? fmt::format("Rebobinados: {}  |  Puntos: {}  |  X: {}", st.rewinds, st.snapshots, static_cast<int>(st.progressX))
-            : "Entra a un nivel para ver estadisticas";
-        auto lbl = CCLabelBMFont::create(info.c_str(), "chatFont.fnt");
-        lbl->setScale(0.8f);
-        lbl->setPosition({m_size.width / 2, 26.f});
-        menu->addChild(lbl);
+        auto again = Button::createWithNode(
+            ButtonSprite::create("Re-resolver", "goldFont.fnt", "GJ_button_01.png", 0.7f),
+            [](Button*) {
+                if (stats().inLevel) stats().resolveRequested = true;
+            }
+        );
+        m_mainLayer->addChildAtPosition(again, Anchor::Center, {-72.f, -116.f});
 
+        auto close = Button::createWithNode(
+            ButtonSprite::create("Cerrar", "goldFont.fnt", "GJ_button_06.png", 0.7f),
+            [this](Button* b) { this->onClose(b); }
+        );
+        m_mainLayer->addChildAtPosition(close, Anchor::Center, {72.f, -116.f});
+
+        m_stats = CCLabelBMFont::create("", "chatFont.fnt");
+        m_stats->setScale(0.6f);
+        m_stats->setOpacity(170);
+        m_mainLayer->addChildAtPosition(m_stats, Anchor::Center, {0.f, -142.f});
+
+        this->schedule(schedule_selector(Panel::tick), 0.2f);
+        this->tick(0.f);
         return true;
+    }
+
+    void Panel::tick(float) {
+        auto& st = stats();
+        m_state->setString(phaseName(st.phase));
+        m_state->setColor(phaseColor(st.phase));
+        m_stats->setString(st.inLevel
+            ? fmt::format("Progreso {}%  |  Reintentos {}  |  Pasos {}",
+                static_cast<int>(st.percent), st.attempts, st.steps).c_str()
+            : "Entra a un nivel para ver estadisticas");
     }
 
     Panel::~Panel() {

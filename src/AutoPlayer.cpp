@@ -107,13 +107,22 @@ namespace acgdl {
 
     }
 
-    bool decideHold(PlayerObject* p, LevelData const& d, int frame) {
+    bool decideHold(PlayerObject* p, LevelData const& d, BotMemory& mem, int step, DecideOpts opts) {
         float px = p->getPositionX();
         float py = p->getPositionY();
         float speed = p->m_playerSpeed > 0.f ? p->m_playerSpeed : 0.9f;
         float ups = speed * UNITS_PER_SPEED;
-        float vy = static_cast<float>(p->m_yVelocity);
         bool flipped = p->m_isUpsideDown;
+
+        // velocidad vertical medida (pantalla), por paso
+        if (!mem.init) {
+            mem.init = true;
+            mem.vy = 0.f;
+        } else {
+            mem.vy = py - mem.lastY;
+        }
+        mem.lastY = py;
+        float vy = mem.vy;
 
         // ---- Wave: mantener la altura del pasillo ----
         if (p->m_isDart) {
@@ -127,19 +136,18 @@ namespace acgdl {
         if (p->m_isShip) {
             bool bounded;
             float target = corridorTarget(d, px, py, ups * 0.45f, bounded);
-            float pred = py + vy * 0.12f;
+            float pred = py + vy * 30.f;
             bool wantUp = pred < target;
             return flipped ? !wantUp : wantUp;
         }
 
-        // ---- UFO: toques repetidos ----
+        // ---- UFO: toques repetidos (30 por segundo) ----
         if (p->m_isBird) {
             bool bounded;
             float target = corridorTarget(d, px, py, ups * 0.45f, bounded);
-            float pred = py + vy * 0.10f;
-            // con gravedad invertida el salto del ufo empuja hacia abajo
+            float pred = py + vy * 30.f;
             bool need = flipped ? (pred > target + 8.f) : (pred < target - 8.f);
-            return need && (frame % 2 == 0);
+            return need && (step % 8 < 2);
         }
 
         // ---- Swing: cambia de direccion al acercarse a los limites ----
@@ -147,17 +155,32 @@ namespace acgdl {
             bool bounded;
             float target = corridorTarget(d, px, py, ups * 0.45f, bounded);
             bool goingUp = vy > 0.f;
-            float pred = py + vy * 0.12f;
+            float pred = py + vy * 30.f;
             bool needFlip = goingUp ? pred > target + 30.f : pred < target - 30.f;
-            return needFlip && (frame % 2 == 0);
+            return needFlip && (step % 8 < 2);
         }
 
         // ---- Cubo / bola / robot / spider ----
+
+        // Orbes: hay que SOLTAR y volver a PULSAR al entrar (flanco de pulsacion)
+        if (!opts.ignoreOrbs && !p->m_isBall) {
+            if (orbUnderPlayer(d, px, py)) {
+                if (!mem.inOrb) {
+                    mem.inOrb = true;
+                    mem.pressedOrb = false;
+                }
+                if (!mem.pressedOrb) {
+                    if (opts.wasHolding) return false; // soltar primero
+                    mem.pressedOrb = true;
+                    return true;
+                }
+                return true;
+            }
+            mem.inOrb = false;
+            mem.pressedOrb = false;
+        }
+
         bool grounded = p->m_isOnGround;
-
-        // Orbes: pulsar mientras se esta encima
-        if (!p->m_isBall && orbUnderPlayer(d, px, py)) return true;
-
         if (!grounded) return false;
 
         float jumpDist = ups * JUMP_TIME;
@@ -169,7 +192,6 @@ namespace acgdl {
             float width = c.end - c.start;
             float center = (c.start + c.end) * 0.5f;
             if (p->m_isBall || p->m_isSpider) {
-                // un toque cambia de lado: basta con pulsar justo antes
                 if (c.start - (px + HALF) <= ups * 0.10f) return true;
             } else if (width > jumpDist * 0.75f) {
                 if (c.start - (px + HALF) <= jumpDist * 0.30f) return true;
