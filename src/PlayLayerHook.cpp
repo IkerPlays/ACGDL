@@ -314,7 +314,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         // si sigue fallando en el mismo punto, se descartan checkpoints para ir mas atras
         if (g.fails % 6 == 0 && !g.cpStep.empty() && pl->m_checkpointArray &&
             pl->m_checkpointArray->count() > 0) {
-            pl->m_checkpointArray->removeLastObject();
+            pl->removeCheckpoint(false); // el juego tambien limpia el objeto fisico del checkpoint
             g.cpStep.pop_back();
         }
 
