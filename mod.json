@@ -8,10 +8,13 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.0.0",
+	"version": "v1.1.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
-	"tags": ["gameplay", "utility"],
+	"tags": [
+		"gameplay",
+		"utility"
+	],
 	"settings": {
 		"auto-play": {
 			"type": "bool",
@@ -19,17 +22,17 @@
 			"name": "Auto-completar niveles",
 			"description": "Al entrar a un nivel se lee y el bot lo juega solo."
 		},
+		"rewind": {
+			"type": "bool",
+			"default": true,
+			"name": "Búsqueda con rebobinado",
+			"description": "Si el bot va a morir, vuelve unos instantes atrás y prueba otros timings hasta pasar (sin noclip). Ese intento NO se guarda."
+		},
 		"show-info": {
 			"type": "bool",
 			"default": true,
 			"name": "Mostrar resumen del nivel",
 			"description": "Muestra una notificación con lo que se leyó del nivel (pinchos, orbes, pads...)."
-		},
-		"rescue": {
-			"type": "bool",
-			"default": true,
-			"name": "Modo rescate",
-			"description": "Si el bot fallaría en un punto, ignora la muerte para que el nivel se complete igualmente. Si se usa, ese intento NO se guarda."
 		},
 		"safe-mode": {
 			"type": "bool",
