@@ -8,7 +8,7 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.1.1",
+	"version": "v1.2.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
 	"tags": [
@@ -26,7 +26,7 @@
 			"type": "bool",
 			"default": true,
 			"name": "Búsqueda con rebobinado",
-			"description": "Juega en modo práctica real: si el bot muere vuelve al último checkpoint y prueba otros timings (sin noclip). No cuenta como completado."
+			"description": "Resuelve el nivel en segundo plano (pantalla de carga) probando timings con checkpoints, y luego lo ejecuta de verdad. Sin noclip."
 		},
 		"show-info": {
 			"type": "bool",
