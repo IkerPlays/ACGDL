@@ -21,11 +21,11 @@ namespace {
     // SIEMPRE este paso fijo, asi la solucion se reproduce igual.
     constexpr float STEP = 1.f / 240.f;
 
-    enum Phase { P_OFF = 0, P_SOLVE = 1, P_PLAY = 2, P_LIVE = 3, P_WAIT = 4 };
+    enum Phase { PH_OFF = 0, PH_SOLVE = 1, PH_PLAY = 2, PH_LIVE = 3, PH_WAIT = 4 };
 
     struct Run {
         acgdl::LevelData data;
-        int phase = P_OFF;
+        int phase = PH_OFF;
         acgdl::BotMemory mem;
         bool holding = false;
         bool finished = false;
@@ -118,8 +118,8 @@ namespace {
     // Vuelve a jugar normal en directo (sin solucion previa).
     void goLive(PlayLayer* pl) {
         auto& st = acgdl::stats();
-        g.phase = P_LIVE;
-        st.phase = P_LIVE;
+        g.phase = PH_LIVE;
+        st.phase = PH_LIVE;
         mute(false);
         g.step = 0;
         g.acc = 0.0;
@@ -130,9 +130,9 @@ namespace {
 
     void leaveBot(PlayLayer* pl) {
         auto& st = acgdl::stats();
-        bool wasSolving = g.phase == P_SOLVE;
-        g.phase = P_OFF;
-        st.phase = P_OFF;
+        bool wasSolving = g.phase == PH_SOLVE;
+        g.phase = PH_OFF;
+        st.phase = PH_OFF;
         mute(false);
         if (wasSolving) {
             pl->removeAllCheckpoints();
@@ -144,7 +144,7 @@ namespace {
     // Empieza (o reinicia) la resolucion en segundo plano.
     void beginSolve(PlayLayer* pl) {
         auto& st = acgdl::stats();
-        g.phase = P_SOLVE;
+        g.phase = PH_SOLVE;
         g.inputs.clear();
         g.cpStep.clear();
         g.hist.clear();
@@ -163,7 +163,7 @@ namespace {
         g.mem.reset();
         g.rng ^= static_cast<uint32_t>(g.resolves * 2654435761u + 12345u);
 
-        st.phase = P_SOLVE;
+        st.phase = PH_SOLVE;
         st.percent = 0.f;
         st.attempts = 0;
         st.checkpoints = 0;
@@ -181,8 +181,8 @@ namespace {
     // La solucion ya esta: se ejecuta de verdad desde el principio.
     void finishSolve(PlayLayer* pl) {
         auto& st = acgdl::stats();
-        g.phase = P_PLAY;
-        st.phase = P_PLAY;
+        g.phase = PH_PLAY;
+        st.phase = PH_PLAY;
         st.steps = static_cast<int>(g.inputs.size());
         st.percent = 0.f;
         mute(false);
@@ -217,10 +217,10 @@ class $modify(ACPlayLayer, PlayLayer) {
 
         if (searchOn()) {
             // se resuelve cuando el juego haya arrancado (ver startGame / update)
-            g.phase = P_WAIT;
+            g.phase = PH_WAIT;
         } else {
-            g.phase = P_LIVE;
-            st.phase = P_LIVE;
+            g.phase = PH_LIVE;
+            st.phase = PH_LIVE;
             if (safeOn()) m_isTestMode = true;
             if (Mod::get()->getSettingValue<bool>("show-info")) {
                 Notification::create(st.info, NotificationIcon::Info, 4.f)->show();
@@ -230,18 +230,18 @@ class $modify(ACPlayLayer, PlayLayer) {
 
     void startGame() {
         PlayLayer::startGame();
-        if (g.phase == P_WAIT) g.startReady = true;
+        if (g.phase == PH_WAIT) g.startReady = true;
     }
 
     void resetLevel() {
         PlayLayer::resetLevel();
-        if (g.phase == P_OFF || g.phase == P_WAIT) return;
+        if (g.phase == PH_OFF || g.phase == PH_WAIT) return;
 
         this->handleButton(false, 1, true);
         g.holding = false;
         g.mem.reset();
 
-        if (g.phase == P_SOLVE) {
+        if (g.phase == PH_SOLVE) {
             g.lastCpX = m_player1 ? m_player1->getPositionX() : -1000.f;
             auto fmod = FMODAudioEngine::sharedEngine();
             if (fmod) fmod->pauseAllMusic(true);
@@ -254,25 +254,25 @@ class $modify(ACPlayLayer, PlayLayer) {
 
     // Durante la resolucion no se "muere": el solver rebobina. Ejecutando, se cuentan los fallos.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
-        if (g.phase != P_OFF && object != m_anticheatSpike) {
-            if (g.phase == P_SOLVE) {
+        if (g.phase != PH_OFF && object != m_anticheatSpike) {
+            if (g.phase == PH_SOLVE) {
                 if (!g.died) {
                     g.died = true;
                     g.deathX = m_player1 ? m_player1->getPositionX() : 0.f;
                 }
                 return;
             }
-            if (g.phase == P_PLAY) g.playDeaths++;
+            if (g.phase == PH_PLAY) g.playDeaths++;
         }
         PlayLayer::destroyPlayer(player, object);
     }
 
     void levelComplete() {
-        if (g.phase == P_SOLVE) {
+        if (g.phase == PH_SOLVE) {
             g.simDone = true;
             return;
         }
-        if (g.phase != P_OFF) {
+        if (g.phase != PH_OFF) {
             this->handleButton(false, 1, true);
             g.holding = false;
             g.finished = true;
@@ -282,9 +282,9 @@ class $modify(ACPlayLayer, PlayLayer) {
     }
 
     void onQuit() {
-        if (g.phase == P_SOLVE) mute(false);
-        g.phase = P_OFF;
-        acgdl::stats().phase = P_OFF;
+        if (g.phase == PH_SOLVE) mute(false);
+        g.phase = PH_OFF;
+        acgdl::stats().phase = PH_OFF;
         acgdl::stats().inLevel = false;
         PlayLayer::onQuit();
     }
@@ -402,7 +402,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         auto p = pl->m_player1;
         if (p && !p->m_isDead) {
             bool want = false;
-            if (g.phase == P_PLAY) {
+            if (g.phase == PH_PLAY) {
                 want = static_cast<size_t>(g.step) < g.inputs.size() && g.inputs[g.step] != 0;
             } else {
                 acgdl::DecideOpts o;
@@ -417,7 +417,7 @@ class $modify(ACBase, GJBaseGameLayer) {
 
     void update(float dt) {
         auto pl = PlayLayer::get();
-        if (!pl || static_cast<GJBaseGameLayer*>(pl) != this || g.phase == P_OFF || !g.data.ready) {
+        if (!pl || static_cast<GJBaseGameLayer*>(pl) != this || g.phase == PH_OFF || !g.data.ready) {
             GJBaseGameLayer::update(dt);
             return;
         }
@@ -425,10 +425,10 @@ class $modify(ACBase, GJBaseGameLayer) {
         auto& st = acgdl::stats();
 
         // esperando a que el nivel arranque: el juego corre normal unos frames
-        if (g.phase == P_WAIT) {
+        if (g.phase == PH_WAIT) {
             GJBaseGameLayer::update(dt);
             if (!botOn()) {
-                g.phase = P_OFF;
+                g.phase = PH_OFF;
                 return;
             }
             if (g.startReady && ++g.waitFrames > 20) {
@@ -446,7 +446,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
         if (st.skipRequested) {
             st.skipRequested = false;
-            if (g.phase == P_SOLVE) goLive(pl);
+            if (g.phase == PH_SOLVE) goLive(pl);
         }
         if (st.resolveRequested) {
             st.resolveRequested = false;
@@ -456,7 +456,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
 
         // la solucion fallo al ejecutarla: se vuelve a resolver (hasta 3 veces) o se juega en directo
-        if (g.phase == P_PLAY && g.playDeaths >= 2) {
+        if (g.phase == PH_PLAY && g.playDeaths >= 2) {
             if (g.resolves < 3) {
                 g.resolves++;
                 st.resolves = g.resolves;
@@ -471,14 +471,14 @@ class $modify(ACBase, GJBaseGameLayer) {
             return;
         }
 
-        if (g.phase == P_SOLVE) {
+        if (g.phase == PH_SOLVE) {
             auto t0 = std::chrono::steady_clock::now();
             do {
                 this->simStep(pl);
-            } while (g.phase == P_SOLVE &&
+            } while (g.phase == PH_SOLVE &&
                      std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 0.012);
 
-            if (g.phase == P_SOLVE) {
+            if (g.phase == PH_SOLVE) {
                 st.percent = std::clamp(g.bestX / std::max(1.f, g.data.endX) * 100.f, 0.f, 100.f);
                 st.attempts = g.totalFails;
                 st.checkpoints = static_cast<int>(g.cpStep.size());
