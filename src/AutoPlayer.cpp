@@ -107,6 +107,42 @@ namespace acgdl {
 
     }
 
+    namespace {
+
+        // Pasillo del jugador: suelo y techo mas cercanos por delante.
+        bool corridorBounds(LevelData const& d, float px, float py, float look, float& low, float& high) {
+            low = -std::numeric_limits<float>::infinity();
+            high = std::numeric_limits<float>::infinity();
+            size_t i = firstFrom(d.solids, px - HALF - d.maxSolidW);
+            for (; i < d.solids.size(); i++) {
+                Box const& b = d.solids[i];
+                if (b.minX > px + look) break;
+                if (b.maxX < px - HALF) continue;
+                float cy = (b.minY + b.maxY) * 0.5f;
+                if (cy > py) high = std::min(high, b.minY);
+                else low = std::max(low, b.maxY);
+            }
+            return std::isfinite(low) && std::isfinite(high) && high - low > 40.f;
+        }
+
+        // Al cambiar de lado (bola/spider), el otro lado tiene pinchos justo donde aterrizaria?
+        bool oppositeBlocked(LevelData const& d, float px, float py, float ups) {
+            float low, high;
+            if (!corridorBounds(d, px, py, ups * 0.6f, low, high)) return false;
+            float destY = py < (low + high) * 0.5f ? high - HALF : low + HALF;
+            float x0 = px + HALF + ups * 0.04f;
+            float x1 = px + HALF + ups * 0.40f;
+            for (size_t i = firstFrom(d.hazards, x0 - d.maxHazardW); i < d.hazards.size(); i++) {
+                Box const& h = d.hazards[i];
+                if (h.minX > x1) break;
+                if (h.maxX < x0) continue;
+                if (h.maxY >= destY - 18.f && h.minY <= destY + 18.f) return true;
+            }
+            return false;
+        }
+
+    }
+
     bool decideHold(PlayerObject* p, LevelData const& d, BotMemory& mem, int step, DecideOpts opts) {
         float px = p->getPositionX();
         float py = p->getPositionY();
@@ -163,7 +199,7 @@ namespace acgdl {
         // ---- Cubo / bola / robot / spider ----
 
         // Orbes: hay que SOLTAR y volver a PULSAR al entrar (flanco de pulsacion)
-        if (!opts.ignoreOrbs && !p->m_isBall) {
+        if (!opts.ignoreOrbs) {
             if (orbUnderPlayer(d, px, py)) {
                 if (!mem.inOrb) {
                     mem.inOrb = true;
@@ -192,7 +228,12 @@ namespace acgdl {
             float width = c.end - c.start;
             float center = (c.start + c.end) * 0.5f;
             if (p->m_isBall || p->m_isSpider) {
-                if (c.start - (px + HALF) <= ups * 0.10f) return true;
+                float dist = c.start - (px + HALF);
+                if (dist <= ups * 0.10f) {
+                    // cambiar de lado solo si el otro lado esta libre (o ya no queda tiempo)
+                    if (oppositeBlocked(d, px, py, ups) && dist > ups * 0.03f) return false;
+                    return true;
+                }
             } else if (width > jumpDist * 0.75f) {
                 if (c.start - (px + HALF) <= jumpDist * 0.30f) return true;
             } else if (center - px <= jumpDist * 0.5f) {
