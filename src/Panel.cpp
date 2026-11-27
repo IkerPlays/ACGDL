@@ -1,4 +1,5 @@
 #include "Panel.hpp"
+#include <Geode/ui/Toggler.hpp>
 #include "BotState.hpp"
 
 using namespace geode::prelude;
@@ -44,7 +45,7 @@ namespace acgdl {
         layer->addChildAtPosition(d, Anchor::Center, {-142.f, y - 9.f}, {0.f, 0.5f});
 
         std::string k = key;
-        auto toggler = Toggler::createWithStandardSprites(0.75f, [k](Toggler*, bool on) {
+        auto toggler = geode::Toggler::createWithStandardSprites(0.75f, [k](geode::Toggler*, bool on) {
             Mod::get()->setSettingValue<bool>(k, on);
         });
         toggler->setToggled(Mod::get()->getSettingValue<bool>(key));
