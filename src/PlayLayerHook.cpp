@@ -62,6 +62,9 @@ namespace {
         // espera a que el juego haya arrancado de verdad
         bool startReady = false;
         int waitFrames = 0;
+
+        // frames sin llamar a la fisica tras reiniciar el nivel (deja que el juego termine de armarse)
+        int settle = 0;
     };
 
     Run g;
@@ -126,6 +129,8 @@ namespace {
         g.holding = false;
         g.mem.reset();
         restartClean(pl);
+        g.settle = 4;
+        log::info("[AutoComplete] modo directo");
     }
 
     void leaveBot(PlayLayer* pl) {
@@ -173,8 +178,10 @@ namespace {
         if (!pl->m_isPracticeMode) pl->togglePracticeMode(true);
         pl->resetLevelFromStart();
 
+        g.settle = 4;
+        log::info("[AutoComplete] solver iniciado");
         if (auto popup = acgdl::LoadingPopup::create()) {
-            pl->addChild(popup, 100000);
+            popup->show();
         }
     }
 
@@ -192,6 +199,8 @@ namespace {
         g.playDeaths = 0;
         g.mem.reset();
         restartClean(pl);
+        g.settle = 4;
+        log::info("[AutoComplete] solucion lista: {} pasos, {} reintentos", g.inputs.size(), g.totalFails);
 
         Notification::create(
             fmt::format("Solucion lista ({} pasos). Ejecutando...", g.inputs.size()),
@@ -218,6 +227,7 @@ class $modify(ACPlayLayer, PlayLayer) {
         if (searchOn()) {
             // se resuelve cuando el juego haya arrancado (ver startGame / update)
             g.phase = PH_WAIT;
+            log::info("[AutoComplete] nivel leido, esperando arranque");
         } else {
             g.phase = PH_LIVE;
             st.phase = PH_LIVE;
@@ -431,7 +441,7 @@ class $modify(ACBase, GJBaseGameLayer) {
                 g.phase = PH_OFF;
                 return;
             }
-            if (g.startReady && ++g.waitFrames > 20) {
+            if (g.startReady && ++g.waitFrames > 30) {
                 beginSolve(pl);
             }
             return;
@@ -468,6 +478,12 @@ class $modify(ACBase, GJBaseGameLayer) {
 
         if (g.finished) {
             GJBaseGameLayer::update(dt);
+            return;
+        }
+
+        // tras reiniciar el nivel se deja pasar unos frames sin tocar la fisica
+        if (g.settle > 0) {
+            g.settle--;
             return;
         }
 
