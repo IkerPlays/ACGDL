@@ -28,14 +28,47 @@ namespace acgdl {
                t == GameObjectType::GreenRing ||
                t == GameObjectType::DropRing ||
                t == GameObjectType::DashRing ||
-               t == GameObjectType::GravityDashRing;
+               t == GameObjectType::GravityDashRing ||
+               t == GameObjectType::CustomRing ||
+               t == GameObjectType::SpiderOrb ||
+               t == GameObjectType::TeleportOrb;
     }
 
     static bool isPad(GameObjectType t) {
         return t == GameObjectType::YellowJumpPad ||
                t == GameObjectType::PinkJumpPad ||
                t == GameObjectType::RedJumpPad ||
-               t == GameObjectType::GravityPad;
+               t == GameObjectType::GravityPad ||
+               t == GameObjectType::SpiderPad;
+    }
+
+    static bool isPortal(GameObject* obj) {
+        switch (obj->m_objectType) {
+            case GameObjectType::InverseGravityPortal:
+            case GameObjectType::NormalGravityPortal:
+            case GameObjectType::ShipPortal:
+            case GameObjectType::CubePortal:
+            case GameObjectType::InverseMirrorPortal:
+            case GameObjectType::NormalMirrorPortal:
+            case GameObjectType::BallPortal:
+            case GameObjectType::RegularSizePortal:
+            case GameObjectType::MiniSizePortal:
+            case GameObjectType::UfoPortal:
+            case GameObjectType::DualPortal:
+            case GameObjectType::SoloPortal:
+            case GameObjectType::WavePortal:
+            case GameObjectType::RobotPortal:
+            case GameObjectType::TeleportPortal:
+            case GameObjectType::SpiderPortal:
+            case GameObjectType::SwingPortal:
+            case GameObjectType::GravityTogglePortal:
+                return true;
+            default:
+                break;
+        }
+        // portales de velocidad
+        int id = obj->m_objectID;
+        return id == 200 || id == 201 || id == 202 || id == 203 || id == 1334;
     }
 
     static void sortBoxes(std::vector<Box>& v) {
@@ -54,7 +87,7 @@ namespace acgdl {
             d.endX = std::max(d.endX, obj->getPositionX());
 
             auto type = obj->m_objectType;
-            if (type == GameObjectType::Hazard) {
+            if (type == GameObjectType::Hazard || type == GameObjectType::AnimatedHazard) {
                 Box b = toBox(obj);
                 d.maxHazardW = std::max(d.maxHazardW, std::min(b.maxX - b.minX, 600.f));
                 d.hazards.push_back(b);
@@ -63,9 +96,15 @@ namespace acgdl {
                 d.maxSolidW = std::max(d.maxSolidW, std::min(b.maxX - b.minX, 600.f));
                 d.solids.push_back(b);
             } else if (isOrb(type)) {
-                d.orbs.push_back(toBox(obj));
+                Box b = toBox(obj);
+                d.orbs.push_back(b);
+                d.stops.push_back({b, 50.f});
             } else if (isPad(type)) {
-                d.pads.push_back(toBox(obj));
+                Box b = toBox(obj);
+                d.pads.push_back(b);
+                d.stops.push_back({b, 30.f});
+            } else if (isPortal(obj)) {
+                d.stops.push_back({toBox(obj), 40.f});
             }
         }
 
@@ -73,6 +112,9 @@ namespace acgdl {
         sortBoxes(d.solids);
         sortBoxes(d.orbs);
         sortBoxes(d.pads);
+        std::sort(d.stops.begin(), d.stops.end(), [](Stop const& a, Stop const& b) {
+            return a.box.minX < b.box.minX;
+        });
         d.ready = true;
         return d;
     }

@@ -12,6 +12,7 @@
 #include "BotState.hpp"
 #include "LevelScanner.hpp"
 #include "LoadingPopup.hpp"
+#include "Trajectory.hpp"
 
 using namespace geode::prelude;
 
@@ -79,6 +80,17 @@ namespace {
         int replayUntil = 0;
         bool verifyFull = false;
         int verifyFails = 0;
+
+        // simulador de trayectoria (MPC)
+        bool trajOn = false;
+        bool mpcDisabled = false;
+        std::vector<uint8_t> mpcPlan;
+        size_t mpcIdx = 0;
+        bool predValid = false;
+        int predStep = 0;
+        cocos2d::CCPoint pred;
+        int checks = 0;
+        int mismatch = 0;
     };
 
     Run g;
@@ -86,6 +98,19 @@ namespace {
     bool botOn() { return Mod::get()->getSettingValue<bool>("auto-play"); }
     bool searchOn() { return Mod::get()->getSettingValue<bool>("rewind"); }
     bool safeOn() { return Mod::get()->getSettingValue<bool>("safe-mode"); }
+    bool trajSetting() { return Mod::get()->getSettingValue<bool>("trajectory"); }
+
+    // Primer obstaculo no modelado (portal, orbe, pad) en el carril del jugador.
+    float nextStopX(acgdl::LevelData const& d, float px, float py, float limit) {
+        auto it = std::lower_bound(d.stops.begin(), d.stops.end(), px - 40.f,
+            [](acgdl::Stop const& s, float v) { return s.box.minX < v; });
+        for (; it != d.stops.end(); ++it) {
+            if (it->box.minX > limit) break;
+            auto const& b = it->box;
+            if (b.maxY + it->slack >= py - 20.f && b.minY - it->slack <= py + 20.f) return b.minX - 25.f;
+        }
+        return limit;
+    }
 
     uint32_t nextRand() {
         g.rng ^= g.rng << 13;
@@ -198,6 +223,14 @@ namespace {
         if (!pl->m_isPracticeMode) pl->togglePracticeMode(true);
         pl->resetLevelFromStart();
 
+        g.trajOn = trajSetting() && acgdl::traj::init(pl);
+        g.mpcDisabled = false;
+        g.mpcPlan.clear();
+        g.mpcIdx = 0;
+        g.predValid = false;
+        g.checks = 0;
+        g.mismatch = 0;
+        log::info("[AutoComplete] simulador de trayectoria: {}", g.trajOn ? "activo" : "no disponible");
         g.settle = 4;
         g.replayUntil = 0;
         g.verifyFull = false;
@@ -229,6 +262,9 @@ namespace {
         g.finished = false;
         g.holding = false;
         g.mem.reset();
+        g.mpcPlan.clear();
+        g.mpcIdx = 0;
+        g.predValid = false;
 
         mute(true);
         pl->removeAllCheckpoints();
@@ -291,6 +327,7 @@ class $modify(ACPlayLayer, PlayLayer) {
     void setupHasCompleted() {
         PlayLayer::setupHasCompleted();
 
+        acgdl::traj::reset();
         g = Run();
         auto& st = acgdl::stats();
         st = acgdl::BotStats();
@@ -341,6 +378,10 @@ class $modify(ACPlayLayer, PlayLayer) {
 
     // Durante la resolucion no se "muere": el solver rebobina. Ejecutando, se cuentan los fallos.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
+        if (acgdl::traj::active()) {
+            acgdl::traj::markDeath();
+            return;
+        }
         if (g.phase != PH_OFF && object != m_anticheatSpike) {
             if (g.phase == PH_SOLVE || g.phase == PH_REPLAY || g.phase == PH_PLAY) {
                 if (!g.died) {
@@ -382,6 +423,8 @@ class $modify(ACPlayLayer, PlayLayer) {
     }
 
     void onQuit() {
+        acgdl::traj::reset();
+        g.trajOn = false;
         if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) mute(false);
         g.phase = PH_OFF;
         acgdl::stats().phase = PH_OFF;
@@ -412,6 +455,9 @@ class $modify(ACBase, GJBaseGameLayer) {
         g.step = target;
         g.inputs.resize(static_cast<size_t>(target));
         g.hist.clear();
+        g.mpcPlan.clear();
+        g.mpcIdx = 0;
+        g.predValid = false;
         pl->resetLevel();
 
         // otra forma de resolver el tramo
@@ -474,6 +520,109 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
     }
 
+    // Politica con simulador: prueba el comportamiento del bot y variaciones (pulsar/soltar)
+    // sobre un jugador falso y elige la que sobrevive.
+    bool mpcStep(PlayLayer* pl, PlayerObject* p, bool base, acgdl::DecideOpts o) {
+        constexpr int HORIZON = 72;
+        constexpr int COMMIT = 6;
+
+        if (g.mpcIdx < g.mpcPlan.size()) return g.mpcPlan[g.mpcIdx++] != 0;
+
+        // comprobar la prediccion anterior contra la realidad
+        if (g.predValid && g.predStep == g.step) {
+            g.checks++;
+            auto pos = p->getPosition();
+            if (std::fabs(pos.x - g.pred.x) > 5.f || std::fabs(pos.y - g.pred.y) > 5.f) g.mismatch++;
+            if (g.checks >= 40 && g.mismatch * 10 > g.checks * 6) {
+                g.mpcDisabled = true;
+                acgdl::stats().diag = "Simulador de trayectoria desactivado: no coincide con el juego";
+                log::warn("[AutoComplete] simulador desactivado ({} de {} predicciones fallaron)", g.mismatch, g.checks);
+            }
+        }
+        g.predValid = false;
+        if (g.mpcDisabled || !acgdl::traj::ready()) return base;
+
+        float px = p->getPositionX();
+        float py = p->getPositionY();
+        float spd = p->m_playerSpeed > 0.f ? p->m_playerSpeed : 0.9f;
+        float perStep = spd * 346.2f / 240.f;
+        float stopX = nextStopX(g.data, px, py, px + HORIZON * perStep);
+        int n = std::min(HORIZON, static_cast<int>((stopX - px) / perStep));
+        if (n < 36) return base; // demasiado cerca de algo que el simulador no modela
+
+        struct Cand { int kind; int t; int d; };
+        std::vector<Cand> cands;
+        cands.push_back({0, 0, 0}); // el bot tal cual
+        cands.push_back({1, 0, 0}); // mantener
+        cands.push_back({2, 0, 0}); // soltar
+        static const int ds[] = {2, 5, 10, 20, 40};
+        static const int ts[] = {0, 3, 6, 10, 16, 24};
+        for (int d : ds) {
+            for (int t : ts) {
+                cands.push_back({3, t, d}); // pulsar durante [t, t+d)
+                cands.push_back({4, t, d}); // soltar durante [t, t+d)
+            }
+        }
+
+        bool h0 = g.holding;
+        std::vector<uint8_t> acts;
+        std::vector<cocos2d::CCPoint> path;
+
+        auto run = [&](Cand const& c) {
+            acgdl::BotMemory mem = g.mem;
+            acgdl::DecideOpts oo = o;
+            bool last = h0;
+            acts.assign(static_cast<size_t>(n), 0);
+            return acgdl::traj::simulate(pl, p, n, stopX, [&](int i, PlayerObject* f) {
+                bool w;
+                if (c.kind == 1) {
+                    w = true;
+                } else if (c.kind == 2) {
+                    w = false;
+                } else {
+                    oo.wasHolding = last;
+                    w = acgdl::decideHold(f, g.data, mem, g.step + i, oo);
+                    if (c.kind == 3 && i >= c.t && i < c.t + c.d) w = true;
+                    if (c.kind == 4 && i >= c.t && i < c.t + c.d) w = false;
+                }
+                last = w;
+                if (i < n) acts[static_cast<size_t>(i)] = w ? 1 : 0;
+                return w;
+            }, h0, &path);
+        };
+
+        auto t0 = std::chrono::steady_clock::now();
+        int bestScore = -1;
+        std::vector<uint8_t> bestActs;
+        std::vector<cocos2d::CCPoint> bestPath;
+        int evaluated = 0;
+        for (auto const& c : cands) {
+            if (evaluated >= 26) break;
+            if (evaluated > 0 &&
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > 0.012) break;
+            auto r = run(c);
+            evaluated++;
+            int score = r.died ? r.steps : n + 1000;
+            if (score > bestScore) {
+                bestScore = score;
+                bestActs = acts;
+                bestPath = path;
+            }
+            if (!r.died) break; // sobrevive todo el horizonte
+        }
+        if (bestActs.empty()) return base;
+
+        size_t commit = std::min(static_cast<size_t>(COMMIT), bestActs.size());
+        g.mpcPlan.assign(bestActs.begin(), bestActs.begin() + static_cast<long>(commit));
+        g.mpcIdx = 1;
+        if (bestPath.size() >= commit) {
+            g.pred = bestPath[commit - 1];
+            g.predStep = g.step + static_cast<int>(commit);
+            g.predValid = true;
+        }
+        return g.mpcPlan[0] != 0;
+    }
+
     void simStep(PlayLayer* pl) {
         auto p = pl->m_player1;
         if (!p) {
@@ -510,6 +659,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         o.dual = pl->m_gameState.m_isDualMode;
         o.p2 = pl->m_player2;
         bool want = acgdl::decideHold(p, g.data, g.mem, g.step, o);
+        if (g.trajOn && g.mutLeft == 0 && !p->m_isDead) want = this->mpcStep(pl, p, want, o);
 
         g.hist.push_back(want ? 1 : 0);
         if (g.hist.size() > 64) g.hist.pop_front();

@@ -8,7 +8,7 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.5.0",
+	"version": "v1.6.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
 	"tags": [
@@ -27,6 +27,12 @@
 			"default": true,
 			"name": "Búsqueda con rebobinado",
 			"description": "Resuelve el nivel en segundo plano (pantalla de carga) probando timings con checkpoints, y luego lo ejecuta de verdad. Sin noclip."
+		},
+		"trajectory": {
+			"type": "bool",
+			"default": true,
+			"name": "Simulador de trayectoria",
+			"description": "Simula el camino del jugador (como los mods Show Trajectory) para elegir las pulsaciones que sobreviven. Si no coincide con el juego se desactiva solo."
 		},
 		"show-info": {
 			"type": "bool",
