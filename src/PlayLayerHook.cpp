@@ -128,7 +128,7 @@ namespace {
         int f = std::max(g.fails, g.liveDeaths);
         if (f >= 40) minHold = std::max(2, minHold / 4);
         else if (f >= 12) minHold = std::max(4, minHold * 6 / 10);
-        minRel = std::max<int>(1, minHold * 3 / 4);
+        minRel = minHold;
     }
 
     bool saveOn() { return Mod::get()->getSettingValue<bool>("save-solutions"); }
@@ -193,15 +193,21 @@ namespace {
 
     void startReplay(PlayLayer* pl, int until, bool full);
 
-    // Cada modo tiene su ritmo natural: en wave y nave se cambia mucho mas rapido que al saltar.
+    // Cada modo tiene su ritmo natural, medido en macros reales de extreme demons
+    // (wave y nave ~55 ms minimo, saltos ~25-30 ms; las pausas son mas largas).
+    // Los valores son multiplicadores sobre el minimo base (ajuste "human-ms").
     void humanForPlayer(PlayerObject* q, int& mh, int& mr) {
-        if (q->m_isDart) {
-            mh = std::max(3, mh / 3);
-            mr = std::max(3, mr / 3);
-        } else if (q->m_isShip || q->m_isBird || q->m_isSwing) {
-            mh = std::max(3, mh / 2);
-            mr = std::max(3, mr / 2);
-        }
+        float hm = 1.f, rm = 1.f;
+        if (q->m_isDart) { hm = 1.8f; rm = 1.8f; }
+        else if (q->m_isShip) { hm = 1.8f; rm = 2.0f; }
+        else if (q->m_isBird) { hm = 1.0f; rm = 1.7f; }
+        else if (q->m_isBall || q->m_isSpider) { hm = 1.0f; rm = 1.3f; }
+        else if (q->m_isSwing) { hm = 1.1f; rm = 1.7f; }
+        else if (q->m_isRobot) { hm = 1.3f; rm = 1.7f; }
+        else { hm = 0.85f; rm = 1.7f; }
+        // donde se falla repetidamente, humanParams ya ha relajado mh; se respeta la proporcion
+        mh = std::max(2, static_cast<int>(static_cast<float>(mh) * hm + 0.5f));
+        mr = std::max(2, static_cast<int>(static_cast<float>(mr) * rm + 0.5f));
     }
 
     bool trajSetting() { return Mod::get()->getSettingValue<bool>("trajectory"); }
