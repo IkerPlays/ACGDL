@@ -45,6 +45,7 @@ namespace acgdl {
     struct DecideOpts {
         bool wasHolding = false;
         bool ignoreOrbs = false;
+        int steps = 1;       // pasos de fisica desde la decision anterior (1 normalmente, 2 en directo)
         bool dual = false;
         PlayerObject* p2 = nullptr;
         // variaciones de la busqueda sobre los orbes

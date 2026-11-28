@@ -1152,6 +1152,7 @@ class $modify(ACBase, GJBaseGameLayer) {
             } else {
                 acgdl::DecideOpts o;
                 o.wasHolding = g.holding;
+                o.steps = k;
                 o.dual = pl->m_gameState.m_isDualMode;
                 o.p2 = pl->m_player2;
                 want = acgdl::decideHold(p, g.data, g.mem, g.step, o);

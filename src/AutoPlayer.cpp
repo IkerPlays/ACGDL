@@ -324,7 +324,7 @@ namespace acgdl {
             mem.init = true;
             mem.vy = 0.f;
         } else {
-            mem.vy = py - mem.lastY;
+            mem.vy = (py - mem.lastY) / static_cast<float>(std::max(1, opts.steps));
         }
         mem.lastY = py;
         float vy = mem.vy;
