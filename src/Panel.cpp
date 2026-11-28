@@ -86,6 +86,7 @@ namespace acgdl {
             {"Entradas humanas", "Las pulsaciones y las pausas duran un minimo para que parezca una persona jugando.", "human"},
         };
         static Entry const right[] = {
+            {"Ejecutar en modo normal", "La ejecucion final se hace sin practica. Si no reproduce la solucion, usa practica.", "normal-mode"},
             {"Modo seguro", "No guarda progreso ni records mientras juega el bot.", "safe-mode"},
             {"Guardar soluciones", "Guarda la solucion y el progreso para continuar en otra sesion.", "save-solutions"},
             {"Resumen del nivel", "Muestra lo que se ha leido del nivel al entrar.", "show-info"},
@@ -93,7 +94,7 @@ namespace acgdl {
         };
         float y0 = 66.f;
         for (int i = 0; i < 5; i++) addCard(m_mainLayer, -107.f, y0 - i * 32.f, left[i]);
-        for (int i = 0; i < 4; i++) addCard(m_mainLayer, 107.f, y0 - i * 32.f, right[i]);
+        for (int i = 0; i < 5; i++) addCard(m_mainLayer, 107.f, y0 - i * 32.f, right[i]);
 
         auto again = Button::createWithNode(
             ButtonSprite::create("Re-resolver", "goldFont.fnt", "GJ_button_01.png", 0.6f),
@@ -101,13 +102,13 @@ namespace acgdl {
                 if (stats().inLevel) stats().resolveRequested = true;
             }
         );
-        m_mainLayer->addChildAtPosition(again, Anchor::Center, {107.f, -62.f});
+        m_mainLayer->addChildAtPosition(again, Anchor::Center, {-70.f, -108.f});
 
         auto close = Button::createWithNode(
             ButtonSprite::create("Cerrar", "goldFont.fnt", "GJ_button_06.png", 0.7f),
             [this](Button* b) { this->onClose(b); }
         );
-        m_mainLayer->addChildAtPosition(close, Anchor::Center, {0.f, -108.f});
+        m_mainLayer->addChildAtPosition(close, Anchor::Center, {70.f, -108.f});
 
         m_stats = CCLabelBMFont::create("", "chatFont.fnt");
         m_stats->setScale(0.6f);

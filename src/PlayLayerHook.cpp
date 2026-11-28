@@ -108,6 +108,11 @@ namespace {
         acgdl::Humanizer hum;
         int liveDeaths = 0;
 
+        // ejecucion en modo normal (si falla varias veces, se ejecuta en practica)
+        bool normalOk = true;
+        int normalFails = 0;
+        bool verifyNormal = false;
+
         // macro importado como solucion inicial
         bool macroMode = false;
         acgdl::macro::Macro macro;
@@ -137,6 +142,8 @@ namespace {
         else if (f >= 12) minHold = std::max(4, minHold * 6 / 10);
         minRel = minHold;
     }
+
+    bool normalModeOn() { return Mod::get()->getSettingValue<bool>("normal-mode"); }
 
     bool macrosOn() { return Mod::get()->getSettingValue<bool>("use-macros"); }
 
@@ -420,6 +427,12 @@ namespace {
         g.predValid = false;
 
         mute(true);
+        // la verificacion completa se hace en el MISMO modo en que se ejecutara: normal si se puede.
+        // Las repeticiones parciales (para seguir resolviendo) necesitan checkpoints: practica.
+        bool wantNormal = full && normalModeOn() && g.normalOk;
+        g.verifyNormal = wantNormal;
+        if (wantNormal && pl->m_isPracticeMode) pl->togglePracticeMode(false);
+        if (!wantNormal && !pl->m_isPracticeMode) pl->togglePracticeMode(true);
         pl->removeAllCheckpoints();
         pl->resetLevelFromStart();
         g.needReady = true;
@@ -457,8 +470,16 @@ namespace {
             g.macroMode = false;
             log::info("[AutoComplete] macro: mejor desfase {} (llega al paso {})", MACRO_OFFS[best], k);
         }
+        if (g.verifyNormal) {
+            g.normalFails++;
+            if (g.normalFails >= 3 && g.normalOk) {
+                g.normalOk = false;
+                log::warn("[AutoComplete] el modo normal no reproduce la solucion: se usara practica");
+                acgdl::stats().diag = "El modo normal no reproduce la solucion: se ejecutara en practica";
+            }
+        }
         g.verifyFails++;
-        acgdl::stats().diag = fmt::format("La repeticion fallo en el paso {} (x={}); reparando (intento {})...",
+        if (g.normalOk || !g.verifyNormal) acgdl::stats().diag = fmt::format("La repeticion fallo en el paso {} (x={}); reparando (intento {})...",
             k, pl->m_player1 ? static_cast<int>(pl->m_player1->getPositionX()) : 0, g.verifyFails);
         if (g.verifyFails > 80) {
             goLive(pl);
@@ -492,13 +513,14 @@ namespace {
         // se ejecuta en el MISMO modo (practica) y con las mismas condiciones que la verificacion
         pl->removeAllCheckpoints();
         pl->resetLevelFromStart();
+        if (safeOn() && !pl->m_isPracticeMode) pl->m_isTestMode = true;
         g.needReady = true;
         g.readyWait = 0.f;
         g.settle = 4;
         log::info("[AutoComplete] solucion verificada: {} pasos, {} reintentos", g.inputs.size(), g.totalFails);
 
         Notification::create(
-            fmt::format("Solucion lista ({} pasos). Ejecutando...", g.inputs.size()),
+            fmt::format("Solucion lista ({} pasos). Ejecutando en modo {}...", g.inputs.size(), pl->m_isPracticeMode ? "practica" : "normal"),
             NotificationIcon::Success, 3.f
         )->show();
     }
@@ -1069,7 +1091,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         g.bestX = std::max(g.bestX, px);
         g.bestPercent = std::max(g.bestPercent, pl->getCurrentPercent());
         if (px - g.lastCpX >= g.cpSpacing && !g.holding && !p->m_isDead && g.step > 0) {
-            if (pl->markCheckpoint()) g.cpStep.push_back(g.step);
+            if (pl->m_isPracticeMode && pl->markCheckpoint()) g.cpStep.push_back(g.step);
             g.lastCpX = px;
         }
 
@@ -1085,7 +1107,7 @@ class $modify(ACBase, GJBaseGameLayer) {
             // mismas condiciones que la repeticion de verificacion (checkpoints incluidos)
             float px = p->getPositionX();
             if (px - g.lastCpX >= g.cpSpacing && !g.holding && g.step > 0) {
-                pl->markCheckpoint();
+                if (pl->m_isPracticeMode) pl->markCheckpoint();
                 g.lastCpX = px;
             }
         }
