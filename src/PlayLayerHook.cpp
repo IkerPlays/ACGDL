@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <deque>
+#include <unordered_set>
 #include <vector>
 
 #include "AutoPlayer.hpp"
@@ -95,6 +96,8 @@ namespace {
         cocos2d::CCPoint pred;
         int checks = 0;
         int mismatch = 0;
+        std::unordered_set<uint64_t> bad;       // planes del simulador que acabaron en muerte
+        std::vector<uint64_t> recentPlans;      // ultimas decisiones tomadas
     };
 
     Run g;
@@ -353,6 +356,7 @@ class $modify(ACPlayLayer, PlayLayer) {
 
         g.data = acgdl::scanLevel(this);
         st.info = g.data.summary();
+        log::info("[AutoComplete] objetos: {}", g.data.typeReport);
 
         if (!botOn()) return;
 
@@ -422,6 +426,7 @@ class $modify(ACPlayLayer, PlayLayer) {
                             object ? object->m_objectID : -1,
                             object ? static_cast<int>(object->m_objectType) : -1
                         );
+                        if (object) acgdl::stats().diag += fmt::format(" ({})", acgdl::typeName(static_cast<int>(object->m_objectType)));
                     }
                 }
                 return;
@@ -459,6 +464,11 @@ class $modify(ACBase, GJBaseGameLayer) {
     // ---- un paso del solver ----
     void rollback(PlayLayer* pl) {
         g.died = false;
+        // los ultimos planes del simulador no funcionaron: no repetirlos
+        for (size_t i = g.recentPlans.size() > 3 ? g.recentPlans.size() - 3 : 0; i < g.recentPlans.size(); i++) {
+            g.bad.insert(g.recentPlans[i]);
+        }
+        g.recentPlans.clear();
         if (g.failX < 0.f || g.deathX > g.failX + 60.f) {
             g.failX = g.deathX;
             g.fails = 0;
@@ -540,12 +550,16 @@ class $modify(ACBase, GJBaseGameLayer) {
         } else {
             g.mutLeft = 160 + back * 40 + static_cast<int>(nextRand() % 300);
         }
+
+        // con el simulador, la busqueda sistematica va primero; el azar solo tras muchos fallos
+        if (g.trajOn && !g.mpcDisabled && g.fails <= 10) g.mutLeft = 0;
     }
 
-    // Politica con simulador: prueba el comportamiento del bot y variaciones (pulsar/soltar)
-    // sobre un jugador falso y elige la que sobrevive.
+    // Politica con simulador: prueba el comportamiento del bot y variaciones (pulsar/soltar,
+    // doble toque) sobre un jugador falso y elige la que sobrevive. Recuerda los planes que
+    // acabaron en muerte para no repetirlos (busqueda sistematica).
     bool mpcStep(PlayLayer* pl, PlayerObject* p, bool base, acgdl::DecideOpts o) {
-        constexpr int HORIZON = 72;
+        constexpr int HORIZON = 84;
         constexpr int COMMIT = 6;
 
         if (g.mpcIdx < g.mpcPlan.size()) return g.mpcPlan[g.mpcIdx++] != 0;
@@ -568,23 +582,69 @@ class $modify(ACBase, GJBaseGameLayer) {
         float py = p->getPositionY();
         float spd = p->m_playerSpeed > 0.f ? p->m_playerSpeed : 0.9f;
         float perStep = spd * 346.2f / 240.f;
-        float stopX = nextStopX(g.data, px, py, px + HORIZON * perStep);
+        float limit = px + HORIZON * perStep;
+
+        bool orbsIn = Mod::get()->getSettingValue<bool>("trajectory-orbs");
+        float stopX = limit;
+        {
+            auto const& list = orbsIn ? g.data.portalStops : g.data.stops;
+            auto it = std::lower_bound(list.begin(), list.end(), px - 40.f,
+                [](acgdl::Stop const& s2, float v) { return s2.box.minX < v; });
+            for (; it != list.end(); ++it) {
+                if (it->box.minX > limit) break;
+                auto const& b2 = it->box;
+                if (b2.maxY + it->slack >= py - 20.f && b2.minY - it->slack <= py + 20.f) {
+                    stopX = b2.minX - 25.f;
+                    break;
+                }
+            }
+        }
         int n = std::min(HORIZON, static_cast<int>((stopX - px) / perStep));
         if (n < 36) return base; // demasiado cerca de algo que el simulador no modela
 
-        struct Cand { int kind; int t; int d; };
+        // objetos cuyo estado se restaura tras simular
+        std::vector<GameObject*> touch;
+        if (orbsIn) {
+            float x0 = px - 80.f, x1 = limit + 80.f;
+            for (size_t i = 0; i < g.data.orbs.size(); i++) {
+                if (g.data.orbs[i].maxX < x0) continue;
+                if (g.data.orbs[i].minX > x1) break;
+                touch.push_back(g.data.orbObjs[i]);
+            }
+            for (size_t i = 0; i < g.data.pads.size(); i++) {
+                if (g.data.pads[i].maxX < x0) continue;
+                if (g.data.pads[i].minX > x1) break;
+                touch.push_back(g.data.padObjs[i]);
+            }
+        }
+
+        struct Cand { int kind; int t; int d; int t2; int d2; };
         std::vector<Cand> cands;
-        cands.push_back({0, 0, 0}); // el bot tal cual
-        cands.push_back({1, 0, 0}); // mantener
-        cands.push_back({2, 0, 0}); // soltar
+        cands.push_back({0, 0, 0, 0, 0}); // el bot tal cual
+        cands.push_back({1, 0, 0, 0, 0}); // mantener
+        cands.push_back({2, 0, 0, 0, 0}); // soltar
         static const int ds[] = {2, 5, 10, 20, 40};
         static const int ts[] = {0, 3, 6, 10, 16, 24};
         for (int d : ds) {
             for (int t : ts) {
-                cands.push_back({3, t, d}); // pulsar durante [t, t+d)
-                cands.push_back({4, t, d}); // soltar durante [t, t+d)
+                cands.push_back({3, t, d, 0, 0}); // pulsar durante [t, t+d)
+                cands.push_back({4, t, d, 0, 0}); // soltar durante [t, t+d)
             }
         }
+        // dobles toques (saltos dobles, rampas seguidas): dos pulsaciones separadas
+        static const int t1s[] = {0, 6, 14};
+        static const int d1s[] = {3, 8};
+        static const int gaps[] = {4, 10, 18, 30};
+        static const int d2s[] = {3, 8, 20};
+        for (int t1 : t1s) for (int d1 : d1s) for (int gp : gaps) for (int d2 : d2s) {
+            cands.push_back({5, t1, d1, t1 + d1 + gp, d2});
+        }
+
+        auto keyOf = [&](Cand const& c) {
+            return (static_cast<uint64_t>(g.step) << 32) ^ (static_cast<uint64_t>(c.kind) << 28) ^
+                   (static_cast<uint64_t>(c.t) << 21) ^ (static_cast<uint64_t>(c.d) << 14) ^
+                   (static_cast<uint64_t>(c.t2) << 7) ^ static_cast<uint64_t>(c.d2);
+        };
 
         bool h0 = g.holding;
         std::vector<uint8_t> acts;
@@ -606,33 +666,51 @@ class $modify(ACBase, GJBaseGameLayer) {
                     w = acgdl::decideHold(f, g.data, mem, g.step + i, oo);
                     if (c.kind == 3 && i >= c.t && i < c.t + c.d) w = true;
                     if (c.kind == 4 && i >= c.t && i < c.t + c.d) w = false;
+                    if (c.kind == 5 && ((i >= c.t && i < c.t + c.d) || (i >= c.t2 && i < c.t2 + c.d2))) w = true;
                 }
                 last = w;
                 if (i < n) acts[static_cast<size_t>(i)] = w ? 1 : 0;
                 return w;
-            }, h0, &path);
+            }, h0, &path, orbsIn ? &touch : nullptr, orbsIn);
         };
 
         auto t0 = std::chrono::steady_clock::now();
+        auto elapsed = [&]() {
+            return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        };
+
         int bestScore = -1;
+        uint64_t bestKey = 0;
         std::vector<uint8_t> bestActs;
         std::vector<cocos2d::CCPoint> bestPath;
-        int evaluated = 0;
-        for (auto const& c : cands) {
-            if (evaluated >= 26) break;
-            if (evaluated > 0 &&
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > 0.012) break;
-            auto r = run(c);
-            evaluated++;
-            int score = r.died ? r.steps : n + 1000;
-            if (score > bestScore) {
-                bestScore = score;
-                bestActs = acts;
-                bestPath = path;
+        bool survivor = false;
+        size_t evaluated = 0;
+
+        // 1.a pasada: planes que no han matado antes; 2.a: todos si no queda ninguno
+        for (int pass = 0; pass < 2 && !survivor && bestActs.empty(); pass++) {
+            for (auto const& c : cands) {
+                if (pass == 0 && g.bad.count(keyOf(c))) continue;
+                // presupuesto: poco si el plan base sobrevive, mas si hace falta buscar
+                bool needMore = bestScore < n + 1000;
+                double budget = needMore && evaluated >= 26 ? 0.035 : 0.012;
+                if (evaluated >= 26 && elapsed() > budget) break;
+                if (evaluated >= cands.size()) break;
+                auto r = run(c);
+                evaluated++;
+                int score = r.died ? r.steps : n + 1000;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestKey = keyOf(c);
+                    bestActs = acts;
+                    bestPath = path;
+                }
+                if (!r.died) { survivor = true; break; }
             }
-            if (!r.died) break; // sobrevive todo el horizonte
         }
         if (bestActs.empty()) return base;
+
+        g.recentPlans.push_back(bestKey);
+        if (g.recentPlans.size() > 6) g.recentPlans.erase(g.recentPlans.begin());
 
         size_t commit = std::min(static_cast<size_t>(COMMIT), bestActs.size());
         g.mpcPlan.assign(bestActs.begin(), bestActs.begin() + static_cast<long>(commit));
@@ -662,6 +740,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         if (g.failX >= 0.f && px > g.failX + 220.f) {
             g.fails = 0;
             g.failX = -1.f;
+            g.bad.clear();
         }
 
         // checkpoint oficial de practica (solo sin boton pulsado, para que el estado se reproduzca igual)

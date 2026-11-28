@@ -202,7 +202,13 @@ class $modify(ACTrajBase, GJBaseGameLayer) {
     }
 
     bool canBeActivatedByPlayer(PlayerObject* p0, EffectGameObject* p1) {
-        if (acgdl::traj::active()) return false;
+        if (acgdl::traj::active()) {
+            if (acgdl::traj::orbsAllowed() &&
+                (acgdl::isOrbType(p1->m_objectType) || acgdl::isPadType(p1->m_objectType))) {
+                return GJBaseGameLayer::canBeActivatedByPlayer(p0, p1);
+            }
+            return false;
+        }
         return GJBaseGameLayer::canBeActivatedByPlayer(p0, p1);
     }
 

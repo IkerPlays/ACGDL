@@ -8,7 +8,7 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.7.1",
+	"version": "v1.8.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
 	"tags": [
@@ -33,6 +33,12 @@
 			"default": true,
 			"name": "Simulador de trayectoria",
 			"description": "Simula el camino del jugador (como Show Trajectory) para elegir pulsaciones. Si no coincide con el juego se desactiva solo en ese nivel."
+		},
+		"trajectory-orbs": {
+			"type": "bool",
+			"default": true,
+			"name": "Simulador: incluir orbes y pads",
+			"description": "El simulador tambien simula orbes y pads con el motor del juego (restaura su estado despues). Desactivalo si da problemas."
 		},
 		"show-info": {
 			"type": "bool",
