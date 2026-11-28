@@ -49,6 +49,11 @@ namespace acgdl::traj {
         s_fake->setVisible(false);
         pl->m_objectLayer->addChild(s_fake);
 
+#ifdef GEODE_IS_IOS
+        // iOS: el juego no expone el guardado de estado del jugador, sin simulador
+        reset();
+        return false;
+#else
         s_cp = PlayerCheckpoint::create();
         if (!s_cp) {
             reset();
@@ -56,6 +61,7 @@ namespace acgdl::traj {
         }
         s_cp->retain();
         return true;
+#endif
     }
 
     SimResult simulate(
@@ -71,8 +77,10 @@ namespace acgdl::traj {
         s_cancel = false;
 
         // copiar el estado real al jugador falso con el sistema de checkpoints del juego
+#ifndef GEODE_IS_IOS
         real->saveToCheckpoint(s_cp);
         s_fake->loadFromCheckpoint(s_cp);
+#endif
         s_fake->releaseButton(PlayerButton::Jump);
         bool holding = false;
         if (startHolding) {
