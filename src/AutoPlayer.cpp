@@ -285,7 +285,7 @@ namespace acgdl {
             float target = flyTarget(d, px, py, ups);
             // histeresis: no cambia de direccion por diferencias minimas (evita el temblor)
             bool prevUp = flipped ? !opts.wasHolding : opts.wasHolding;
-            bool wantUp = prevUp ? (py < target + 4.f) : (py < target - 4.f);
+            bool wantUp = prevUp ? (py < target + 3.f) : (py < target - 3.f);
             return flipped ? !wantUp : wantUp;
         }
 
@@ -294,7 +294,7 @@ namespace acgdl {
             float target = flyTarget(d, px, py, ups);
             float pred = py + vy * 30.f;
             bool prevUp = flipped ? !opts.wasHolding : opts.wasHolding;
-            bool wantUp = prevUp ? (pred < target + 6.f) : (pred < target - 6.f);
+            bool wantUp = prevUp ? (pred < target + 4.f) : (pred < target - 4.f);
             return flipped ? !wantUp : wantUp;
         }
 

@@ -92,8 +92,8 @@ namespace acgdl {
 
         m_diag->setString(st.diag.c_str());
         m_stats->setString(fmt::format(
-            "Reintentos: {}   |   Puntos de control: {}",
-            st.attempts, st.checkpoints
+            "Reintentos: {}   |   Puntos de control: {}   |   Tiempo: {} s",
+            st.attempts, st.checkpoints, static_cast<int>(st.elapsed)
         ).c_str());
     }
 

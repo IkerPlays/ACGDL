@@ -104,6 +104,9 @@ namespace {
         float bestPercent = 0.f;
         bool trajChecked = false;
         acgdl::Humanizer hum;
+        int liveDeaths = 0;
+        bool ignoreSaved = false;
+        int lastSaveStep = 0;
     };
 
     Run g;
@@ -120,8 +123,74 @@ namespace {
     void humanParams(int& minHold, int& minRel) {
         int64_t ms = Mod::get()->getSettingValue<int64_t>("human-ms");
         minHold = std::max<int>(1, static_cast<int>(ms * 240 / 1000));
+        // donde el bot falla repetidamente, se relajan los minimos para poder pasar
+        int f = std::max(g.fails, g.liveDeaths);
+        if (f >= 40) minHold = std::max(2, minHold / 4);
+        else if (f >= 12) minHold = std::max(4, minHold * 6 / 10);
         minRel = std::max<int>(1, minHold * 3 / 4);
     }
+
+    bool saveOn() { return Mod::get()->getSettingValue<bool>("save-solutions"); }
+
+    std::string solKey(PlayLayer* pl) {
+        std::string name = pl->m_level ? std::string(pl->m_level->m_levelName) : std::string("?");
+        return fmt::format("sol-{}-{}-{}", name, g.data.totalObjects, static_cast<int>(g.data.endX));
+    }
+
+    // Guarda la solucion como longitudes de tramos (pulsado / soltado): ocupa muy poco.
+    std::string encodeRuns(std::vector<uint8_t> const& in, bool complete) {
+        std::string out = complete ? "C" : "P";
+        if (in.empty()) return out;
+        out += in[0] ? '1' : '0';
+        out += ':';
+        size_t run = 1;
+        for (size_t i = 1; i < in.size(); i++) {
+            if (in[i] == in[i - 1]) {
+                run++;
+            } else {
+                out += std::to_string(run);
+                out += ',';
+                run = 1;
+            }
+        }
+        out += std::to_string(run);
+        return out;
+    }
+
+    bool decodeRuns(std::string const& s, std::vector<uint8_t>& out, bool& complete) {
+        out.clear();
+        if (s.size() < 4 || (s[0] != 'C' && s[0] != 'P') || s[2] != ':') return false;
+        complete = s[0] == 'C';
+        bool val = s[1] == '1';
+        size_t i = 3;
+        while (i < s.size()) {
+            size_t j = s.find(',', i);
+            if (j == std::string::npos) j = s.size();
+            int run = std::atoi(s.substr(i, j - i).c_str());
+            if (run <= 0 || run > 5000000) return false;
+            out.insert(out.end(), static_cast<size_t>(run), val ? 1 : 0);
+            val = !val;
+            i = j + 1;
+        }
+        return !out.empty();
+    }
+
+    void saveSolution(PlayLayer* pl, bool complete) {
+        if (!saveOn() || g.inputs.size() < 240) return;
+        Mod::get()->setSavedValue<std::string>(solKey(pl), encodeRuns(g.inputs, complete));
+    }
+
+    bool loadSolution(PlayLayer* pl) {
+        auto str = Mod::get()->getSavedValue<std::string>(solKey(pl), "");
+        if (str.empty()) return false;
+        bool complete = false;
+        std::vector<uint8_t> v;
+        if (!decodeRuns(str, v, complete)) return false;
+        g.inputs = std::move(v);
+        return true;
+    }
+
+    void startReplay(PlayLayer* pl, int until, bool full);
 
     bool trajSetting() { return Mod::get()->getSettingValue<bool>("trajectory"); }
 
@@ -271,6 +340,14 @@ namespace {
         if (auto popup = acgdl::LoadingPopup::create()) {
             popup->show();
         }
+
+        // si ya hay una solucion (o progreso) guardado de este nivel, se retoma
+        if (saveOn() && !g.ignoreSaved && loadSolution(pl)) {
+            st.diag = fmt::format("Solucion guardada encontrada ({} pasos): verificando...", g.inputs.size());
+            log::info("[AutoComplete] solucion guardada: {} pasos", g.inputs.size());
+            startReplay(pl, static_cast<int>(g.inputs.size()), true);
+        }
+        g.ignoreSaved = false;
     }
 
     // Repite desde cero (con los mismos pasos fijos) las primeras `until` entradas.
@@ -335,6 +412,7 @@ namespace {
         st.phase = PH_PLAY;
         st.steps = static_cast<int>(g.inputs.size());
         st.percent = 0.f;
+        saveSolution(pl, true);
         mute(false);
         g.step = 0;
         g.acc = 0.0;
@@ -432,6 +510,7 @@ class $modify(ACPlayLayer, PlayLayer) {
         }
         if (g.phase != PH_OFF && object != m_anticheatSpike) {
             if (g.phase == PH_LIVE) {
+                g.liveDeaths++;
                 // en directo: recordar los planes del simulador que acabaron en muerte (aprende entre intentos)
                 for (size_t i = g.recentPlans.size() > 3 ? g.recentPlans.size() - 3 : 0; i < g.recentPlans.size(); i++) {
                     g.bad.insert(g.recentPlans[i]);
@@ -661,6 +740,13 @@ class $modify(ACBase, GJBaseGameLayer) {
                 cands.push_back({4, t, d, 0, 0}); // soltar durante [t, t+d)
             }
         }
+        // durante un dash hay que decidir CUANDO soltar: se prueban momentos mas tardios
+        if (p->m_isDashing) {
+            static const int dashT[] = {32, 40, 50, 60, 72};
+            for (int t : dashT) {
+                cands.insert(cands.begin() + 3, {4, t, 60, 0, 0});
+            }
+        }
         // dobles toques (saltos dobles, rampas seguidas): dos pulsaciones separadas
         static const int t1s[] = {0, 6, 14};
         static const int d1s[] = {3, 8};
@@ -862,6 +948,12 @@ class $modify(ACBase, GJBaseGameLayer) {
         GJBaseGameLayer::update(STEP);
         g.step++;
 
+        // progreso guardado cada ~10 s de nivel (permite continuar niveles muy largos)
+        if (std::abs(g.step - g.lastSaveStep) >= 2400) {
+            saveSolution(pl, false);
+            g.lastSaveStep = g.step;
+        }
+
         if (g.simDone) {
             // solucion encontrada: se verifica repitiendola entera desde cero
             startReplay(pl, static_cast<int>(g.inputs.size()), true);
@@ -989,6 +1081,7 @@ class $modify(ACBase, GJBaseGameLayer) {
             st.resolveRequested = false;
             g.resolves++;
             st.resolves = g.resolves;
+            g.ignoreSaved = true;
             beginSolve(pl);
         }
 
@@ -1024,6 +1117,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
 
         if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
+            st.elapsed += dt;
             auto t0 = std::chrono::steady_clock::now();
             do {
                 if (g.phase == PH_REPLAY) this->replayStep(pl);

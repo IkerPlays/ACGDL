@@ -13,6 +13,7 @@ namespace acgdl {
         int checkpoints = 0;
         int steps = 0;           // pasos de la solucion
         int resolves = 0;
+        float elapsed = 0.f;      // segundos resolviendo
         bool inLevel = false;
         bool skipRequested = false;   // saltar la resolucion y jugar en directo
         bool cancelRequested = false; // apagar el bot en este nivel

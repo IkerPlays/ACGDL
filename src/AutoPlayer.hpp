@@ -23,15 +23,20 @@ namespace acgdl {
     struct Humanizer {
         bool cur = false;
         int since = 1000;
+        int need = 0;               // pasos que hay que esperar antes del siguiente cambio
+        uint32_t seed = 2463534242u; // variacion natural (una persona no pulsa siempre igual)
     };
 
     inline bool humanize(Humanizer& h, bool want, int minHold, int minRelease, bool force) {
-        if (want != h.cur) {
-            int need = h.cur ? minHold : minRelease;
-            if (force || h.since >= need) {
-                h.cur = want;
-                h.since = 0;
-            }
+        if (want != h.cur && (force || h.since >= h.need)) {
+            h.cur = want;
+            h.since = 0;
+            // el proximo cambio tardara el minimo mas una variacion de hasta +50%
+            int base = want ? minHold : minRelease;
+            h.seed ^= h.seed << 13;
+            h.seed ^= h.seed >> 17;
+            h.seed ^= h.seed << 5;
+            h.need = base + static_cast<int>(h.seed % static_cast<uint32_t>(base / 2 + 1));
         }
         h.since++;
         return h.cur;
