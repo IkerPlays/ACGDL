@@ -8,7 +8,7 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.8.0",
+	"version": "v1.9.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
 	"tags": [
@@ -51,6 +51,12 @@
 			"default": true,
 			"name": "Modo seguro (no guardar progreso)",
 			"description": "Mientras el bot juega no se guarda progreso ni se suben records. Desactivarlo es bajo tu responsabilidad."
+		},
+		"debug-draw": {
+			"type": "bool",
+			"default": false,
+			"name": "Depuracion: dibujar hitboxes y trayectoria",
+			"description": "Dibuja lo que ve el bot: pinchos (rojo), bloques (azul), orbes (amarillo), pads (rosa), el jugador (verde) y la trayectoria prevista del simulador (blanca; roja si muere)."
 		}
 	}
 }

@@ -27,7 +27,7 @@ namespace acgdl {
     }
 
     static void addRow(CCLayer* layer, int row, char const* title, char const* desc, char const* key) {
-        float y = 100.f - row * 46.f;
+        float y = 144.f - row * 46.f;
 
         auto bg = CCLayerColor::create({0, 0, 0, 70});
         bg->setContentSize({300.f, 40.f});
@@ -53,19 +53,21 @@ namespace acgdl {
     }
 
     bool Panel::init() {
-        if (!Popup::init(340.f, 366.f)) return false;
+        if (!Popup::init(340.f, 456.f)) return false;
         this->setTitle("Auto Complete");
 
         m_state = CCLabelBMFont::create(phaseName(stats().phase), "bigFont.fnt");
         m_state->setScale(0.42f);
         m_state->setColor(phaseColor(stats().phase));
-        m_mainLayer->addChildAtPosition(m_state, Anchor::Center, {0.f, 142.f});
+        m_mainLayer->addChildAtPosition(m_state, Anchor::Center, {0.f, 186.f});
 
         addRow(m_mainLayer, 0, "Auto-completar", "El bot juega y resuelve cada nivel al entrar", "auto-play");
         addRow(m_mainLayer, 1, "Resolver en segundo plano", "Pantalla de carga y luego ejecucion real", "rewind");
         addRow(m_mainLayer, 2, "Simulador de trayectoria", "Simula caminos para elegir pulsaciones", "trajectory");
-        addRow(m_mainLayer, 3, "Resumen del nivel", "Muestra lo leido: pinchos, orbes, pads...", "show-info");
-        addRow(m_mainLayer, 4, "Modo seguro", "No guarda progreso ni records", "safe-mode");
+        addRow(m_mainLayer, 3, "Simulador: orbes y pads", "Incluye orbes y pads en la simulacion", "trajectory-orbs");
+        addRow(m_mainLayer, 4, "Resumen del nivel", "Muestra lo leido: pinchos, orbes, pads...", "show-info");
+        addRow(m_mainLayer, 5, "Modo seguro", "No guarda progreso ni records", "safe-mode");
+        addRow(m_mainLayer, 6, "Dibujar hitboxes", "Muestra lo que ve el bot y su trayectoria", "debug-draw");
 
         auto again = Button::createWithNode(
             ButtonSprite::create("Re-resolver", "goldFont.fnt", "GJ_button_01.png", 0.7f),
@@ -73,18 +75,18 @@ namespace acgdl {
                 if (stats().inLevel) stats().resolveRequested = true;
             }
         );
-        m_mainLayer->addChildAtPosition(again, Anchor::Center, {-72.f, -134.f});
+        m_mainLayer->addChildAtPosition(again, Anchor::Center, {-72.f, -178.f});
 
         auto close = Button::createWithNode(
             ButtonSprite::create("Cerrar", "goldFont.fnt", "GJ_button_06.png", 0.7f),
             [this](Button* b) { this->onClose(b); }
         );
-        m_mainLayer->addChildAtPosition(close, Anchor::Center, {72.f, -134.f});
+        m_mainLayer->addChildAtPosition(close, Anchor::Center, {72.f, -178.f});
 
         m_stats = CCLabelBMFont::create("", "chatFont.fnt");
         m_stats->setScale(0.6f);
         m_stats->setOpacity(170);
-        m_mainLayer->addChildAtPosition(m_stats, Anchor::Center, {0.f, -162.f});
+        m_mainLayer->addChildAtPosition(m_stats, Anchor::Center, {0.f, -206.f});
 
         this->schedule(schedule_selector(Panel::tick), 0.2f);
         this->tick(0.f);

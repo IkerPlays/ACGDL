@@ -14,6 +14,7 @@
 #include "LevelScanner.hpp"
 #include "LoadingPopup.hpp"
 #include "Trajectory.hpp"
+#include "DebugDraw.hpp"
 
 using namespace geode::prelude;
 
@@ -98,6 +99,10 @@ namespace {
         int mismatch = 0;
         std::unordered_set<uint64_t> bad;       // planes del simulador que acabaron en muerte
         std::vector<uint64_t> recentPlans;      // ultimas decisiones tomadas
+        std::vector<cocos2d::CCPoint> lastPath; // ultima trayectoria prevista (depuracion)
+        bool lastPathOk = false;
+        float bestPercent = 0.f;
+        bool trajChecked = false;
     };
 
     Run g;
@@ -163,8 +168,7 @@ namespace {
 
     void updatePercent(PlayLayer* pl) {
         if (!pl->m_player1) return;
-        float x = pl->m_player1->getPositionX();
-        acgdl::stats().percent = std::clamp(x / levelLen(pl) * 100.f, 0.f, 100.f);
+        acgdl::stats().percent = std::clamp(pl->getCurrentPercent(), 0.f, 100.f);
     }
 
     void restartClean(PlayLayer* pl) {
@@ -179,6 +183,7 @@ namespace {
         auto& st = acgdl::stats();
         g.phase = PH_LIVE;
         st.phase = PH_LIVE;
+        g.trajChecked = false;
         mute(false);
         g.step = 0;
         g.acc = 0.0;
@@ -216,6 +221,7 @@ namespace {
         g.fails = 0;
         g.totalFails = 0;
         g.bestX = 0.f;
+        g.bestPercent = 0.f;
         g.step = 0;
         g.mutLeft = 0;
         g.died = false;
@@ -250,7 +256,9 @@ namespace {
         g.replayUntil = 0;
         g.verifyFull = false;
         g.verifyFails = 0;
-        log::info("[AutoComplete] solver iniciado");
+        st.diag = fmt::format("Longitud del nivel (juego): {}  |  objetos hasta x={}",
+            static_cast<int>(pl->m_levelLength), static_cast<int>(g.data.endX));
+        log::info("[AutoComplete] solver iniciado ({})", st.diag);
         if (auto popup = acgdl::LoadingPopup::create()) {
             popup->show();
         }
@@ -349,6 +357,7 @@ class $modify(ACPlayLayer, PlayLayer) {
         PlayLayer::setupHasCompleted();
 
         acgdl::traj::reset();
+        acgdl::dbg::reset();
         g = Run();
         auto& st = acgdl::stats();
         st = acgdl::BotStats();
@@ -386,6 +395,9 @@ class $modify(ACPlayLayer, PlayLayer) {
         this->handleButton(false, 1, true);
         g.holding = false;
         g.mem.reset();
+        g.mpcPlan.clear();
+        g.mpcIdx = 0;
+        g.predValid = false;
 
         g.lastCpX = m_player1 ? m_player1->getPositionX() : -1000.f;
         if (g.step == 0 || g.phase == PH_PLAY || g.phase == PH_LIVE) {
@@ -409,6 +421,13 @@ class $modify(ACPlayLayer, PlayLayer) {
             return;
         }
         if (g.phase != PH_OFF && object != m_anticheatSpike) {
+            if (g.phase == PH_LIVE) {
+                // en directo: recordar los planes del simulador que acabaron en muerte (aprende entre intentos)
+                for (size_t i = g.recentPlans.size() > 3 ? g.recentPlans.size() - 3 : 0; i < g.recentPlans.size(); i++) {
+                    g.bad.insert(g.recentPlans[i]);
+                }
+                g.recentPlans.clear();
+            }
             if (g.phase == PH_SOLVE || g.phase == PH_REPLAY || g.phase == PH_PLAY) {
                 if (!g.died) {
                     g.died = true;
@@ -451,6 +470,7 @@ class $modify(ACPlayLayer, PlayLayer) {
 
     void onQuit() {
         acgdl::traj::reset();
+        acgdl::dbg::reset();
         g.trajOn = false;
         if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) mute(false);
         g.phase = PH_OFF;
@@ -709,6 +729,8 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
         if (bestActs.empty()) return base;
 
+        g.lastPath = bestPath;
+        g.lastPathOk = survivor;
         g.recentPlans.push_back(bestKey);
         if (g.recentPlans.size() > 6) g.recentPlans.erase(g.recentPlans.begin());
 
@@ -736,6 +758,7 @@ class $modify(ACBase, GJBaseGameLayer) {
 
         float px = p->getPositionX();
         g.bestX = std::max(g.bestX, px);
+        g.bestPercent = std::max(g.bestPercent, pl->getCurrentPercent());
 
         if (g.failX >= 0.f && px > g.failX + 220.f) {
             g.fails = 0;
@@ -857,6 +880,7 @@ class $modify(ACBase, GJBaseGameLayer) {
 
         float px = p->getPositionX();
         g.bestX = std::max(g.bestX, px);
+        g.bestPercent = std::max(g.bestPercent, pl->getCurrentPercent());
         if (px - g.lastCpX >= 45.f && !g.holding && !p->m_isDead && g.step > 0) {
             if (pl->markCheckpoint()) g.cpStep.push_back(g.step);
             g.lastCpX = px;
@@ -888,6 +912,13 @@ class $modify(ACBase, GJBaseGameLayer) {
                 o.dual = pl->m_gameState.m_isDualMode;
                 o.p2 = pl->m_player2;
                 want = acgdl::decideHold(p, g.data, g.mem, g.step, o);
+                if (g.phase == PH_LIVE) {
+                    if (!g.trajChecked) {
+                        g.trajChecked = true;
+                        g.trajOn = trajSetting() && acgdl::traj::init(pl);
+                    }
+                    if (g.trajOn && !g.mpcDisabled) want = this->mpcStep(pl, p, want, o);
+                }
             }
             setHold(pl, want);
         }
@@ -975,7 +1006,7 @@ class $modify(ACBase, GJBaseGameLayer) {
                      std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 0.012);
 
             if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
-                st.percent = std::clamp(g.bestX / levelLen(pl) * 100.f, 0.f, 100.f);
+                st.percent = std::clamp(g.bestPercent, 0.f, 100.f);
                 st.attempts = g.totalFails;
                 st.checkpoints = static_cast<int>(g.cpStep.size());
                 st.steps = g.step;
@@ -990,5 +1021,8 @@ class $modify(ACBase, GJBaseGameLayer) {
             g.acc -= STEP;
         }
         updatePercent(pl);
+        if (Mod::get()->getSettingValue<bool>("debug-draw")) {
+            acgdl::dbg::draw(pl, g.data, g.lastPath, g.lastPathOk);
+        }
     }
 };
