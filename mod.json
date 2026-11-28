@@ -8,7 +8,7 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.11.0",
+	"version": "v1.12.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
 	"tags": [
@@ -77,6 +77,14 @@
 			"default": true,
 			"name": "Guardar soluciones",
 			"description": "Guarda la solucion de cada nivel (y el progreso mientras resuelve) para no empezar de cero la proxima vez y poder continuar niveles muy largos."
+		},
+		"solve-budget-ms": {
+			"type": "int",
+			"default": 14,
+			"min": 6,
+			"max": 60,
+			"name": "Velocidad de resolucion (ms por frame)",
+			"description": "Cuanto tiempo de cada frame se dedica a resolver durante la pantalla de carga. Mas alto = resuelve mas rapido pero la pantalla va menos fluida."
 		}
 	}
 }

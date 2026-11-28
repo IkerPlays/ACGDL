@@ -103,6 +103,7 @@ namespace {
         bool lastPathOk = false;
         float bestPercent = 0.f;
         bool trajChecked = false;
+        float cpSpacing = 45.f;
         acgdl::Humanizer hum;
         int liveDeaths = 0;
         bool ignoreSaved = false;
@@ -451,6 +452,8 @@ class $modify(ACPlayLayer, PlayLayer) {
         st.inLevel = true;
 
         g.data = acgdl::scanLevel(this);
+        // niveles enormes: checkpoints mas espaciados (cada uno es caro). Igual en resolver, repetir y ejecutar.
+        g.cpSpacing = g.data.totalObjects > 100000 ? 120.f : g.data.totalObjects > 40000 ? 75.f : 45.f;
         st.info = g.data.summary();
         log::info("[AutoComplete] objetos: {}", g.data.typeReport);
 
@@ -869,7 +872,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
 
         // checkpoint oficial de practica (solo sin boton pulsado, para que el estado se reproduzca igual)
-        if (px - g.lastCpX >= 45.f && !g.holding && !p->m_isDead && g.step > 0) {
+        if (px - g.lastCpX >= g.cpSpacing && !g.holding && !p->m_isDead && g.step > 0) {
             if (pl->markCheckpoint()) g.cpStep.push_back(g.step);
             g.lastCpX = px;
         }
@@ -995,7 +998,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         float px = p->getPositionX();
         g.bestX = std::max(g.bestX, px);
         g.bestPercent = std::max(g.bestPercent, pl->getCurrentPercent());
-        if (px - g.lastCpX >= 45.f && !g.holding && !p->m_isDead && g.step > 0) {
+        if (px - g.lastCpX >= g.cpSpacing && !g.holding && !p->m_isDead && g.step > 0) {
             if (pl->markCheckpoint()) g.cpStep.push_back(g.step);
             g.lastCpX = px;
         }
@@ -1011,7 +1014,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         if (p && g.phase == PH_PLAY && !p->m_isDead) {
             // mismas condiciones que la repeticion de verificacion (checkpoints incluidos)
             float px = p->getPositionX();
-            if (px - g.lastCpX >= 45.f && !g.holding && g.step > 0) {
+            if (px - g.lastCpX >= g.cpSpacing && !g.holding && g.step > 0) {
                 pl->markCheckpoint();
                 g.lastCpX = px;
             }
@@ -1118,12 +1121,13 @@ class $modify(ACBase, GJBaseGameLayer) {
 
         if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
             st.elapsed += dt;
+            double budget = static_cast<double>(Mod::get()->getSettingValue<int64_t>("solve-budget-ms")) / 1000.0;
             auto t0 = std::chrono::steady_clock::now();
             do {
                 if (g.phase == PH_REPLAY) this->replayStep(pl);
                 else this->simStep(pl);
             } while ((g.phase == PH_SOLVE || g.phase == PH_REPLAY) &&
-                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 0.012);
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < budget);
 
             if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
                 st.percent = std::clamp(g.bestPercent, 0.f, 100.f);
