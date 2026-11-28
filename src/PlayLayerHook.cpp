@@ -212,6 +212,19 @@ namespace {
 
     void startReplay(PlayLayer* pl, int until, bool full);
 
+    // Pasos consecutivos con la misma pulsacion (hasta maxK). La verificacion y la ejecucion
+    // agrupan EXACTAMENTE igual: una sola actualizacion del juego por grupo en vez de una por paso.
+    int batchLen(int step, int maxK) {
+        if (maxK <= 1) return 1;
+        auto at = [&](int i) -> uint8_t {
+            return static_cast<size_t>(i) < g.inputs.size() ? g.inputs[static_cast<size_t>(i)] : 0;
+        };
+        uint8_t v = at(step);
+        int k = 1;
+        while (k < maxK && at(step + k) == v) k++;
+        return k;
+    }
+
     // Cada modo tiene su ritmo natural, medido en macros reales de extreme demons
     // (wave y nave ~55 ms minimo, saltos ~25-30 ms; las pausas son mas largas).
     // Los valores son multiplicadores sobre el minimo base (ajuste "human-ms").
@@ -433,6 +446,8 @@ namespace {
         g.verifyNormal = wantNormal;
         if (wantNormal && pl->m_isPracticeMode) pl->togglePracticeMode(false);
         if (!wantNormal && !pl->m_isPracticeMode) pl->togglePracticeMode(true);
+        // verificacion y ejecucion deben tener EXACTAMENTE la misma configuracion
+        pl->m_isTestMode = wantNormal && safeOn();
         pl->removeAllCheckpoints();
         pl->resetLevelFromStart();
         g.needReady = true;
@@ -895,6 +910,12 @@ class $modify(ACBase, GJBaseGameLayer) {
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         };
 
+        bool live = g.phase == PH_LIVE;
+        size_t maxEval = live ? 10 : 26;
+        double baseBudget = live ? 0.0035 : 0.012;
+        double extraBudget = live ? 0.006 : 0.035;
+        double hardCap = live ? 0.008 : 0.05;
+
         int bestScore = -1;
         uint64_t bestKey = 0;
         std::vector<uint8_t> bestActs;
@@ -908,8 +929,9 @@ class $modify(ACBase, GJBaseGameLayer) {
                 if (pass == 0 && g.bad.count(keyOf(c))) continue;
                 // presupuesto: poco si el plan base sobrevive, mas si hace falta buscar
                 bool needMore = bestScore < n + 1000;
-                double budget = needMore && evaluated >= 26 ? 0.035 : 0.012;
-                if (evaluated >= 26 && elapsed() > budget) break;
+                double budget = needMore && evaluated >= maxEval ? extraBudget : baseBudget;
+                if (evaluated >= maxEval && elapsed() > budget) break;
+                if (evaluated > 0 && elapsed() > hardCap) break;
                 if (evaluated >= cands.size()) break;
                 auto r = run(c);
                 evaluated++;
@@ -1095,14 +1117,26 @@ class $modify(ACBase, GJBaseGameLayer) {
             g.lastCpX = px;
         }
 
+        int k = batchLen(g.step, std::min(4, g.replayUntil - g.step));
         setHold(pl, g.inputs[static_cast<size_t>(g.step)] != 0);
-        GJBaseGameLayer::update(STEP);
-        g.step++;
+        auto before = pl->m_gameState.m_currentProgress;
+        GJBaseGameLayer::update(STEP * static_cast<float>(k));
+        int done = static_cast<int>(pl->m_gameState.m_currentProgress - before);
+        if (done < 1 || done > k) done = k;
+        g.step += done;
     }
 
     // ---- un paso de ejecucion (solucion o en directo) ----
-    void playStep(PlayLayer* pl) {
+    // Ejecuta un grupo de pasos y devuelve cuantos. `avail` = pasos de tiempo real disponibles.
+    // Devuelve 0 si todavia no hay tiempo para el grupo completo (para que el agrupado sea
+    // identico al de la verificacion no se parte un grupo).
+    int playBatch(PlayLayer* pl, int avail) {
         auto p = pl->m_player1;
+        int k = 1;
+        if (g.phase == PH_PLAY) k = batchLen(g.step, 4);
+        else k = 2;
+        if (avail < k) return 0;
+
         if (p && g.phase == PH_PLAY && !p->m_isDead) {
             // mismas condiciones que la repeticion de verificacion (checkpoints incluidos)
             float px = p->getPositionX();
@@ -1132,12 +1166,17 @@ class $modify(ACBase, GJBaseGameLayer) {
                     humanForPlayer(p, minHold, minRel);
                     if (humanOn()) want = acgdl::humanize(g.hum, want, minHold, minRel, p->m_isDashing);
                     else g.hum.cur = want;
+                    g.hum.since += k - 1; // el grupo ocupa k pasos de tiempo
                 }
             }
             setHold(pl, want);
         }
-        GJBaseGameLayer::update(STEP);
-        g.step++;
+        auto before = pl->m_gameState.m_currentProgress;
+        GJBaseGameLayer::update(STEP * static_cast<float>(k));
+        int done = static_cast<int>(pl->m_gameState.m_currentProgress - before);
+        if (done < 1 || done > k) done = k;
+        g.step += done;
+        return done;
     }
 
     void update(float dt) {
@@ -1232,10 +1271,12 @@ class $modify(ACBase, GJBaseGameLayer) {
         }
 
         g.acc += std::min(dt, 0.1f);
-        int n = 0;
-        while (g.acc >= STEP && n++ < 60 && !g.finished) {
-            this->playStep(pl);
-            g.acc -= STEP;
+        int guard = 0;
+        while (g.acc >= STEP && guard++ < 60 && !g.finished) {
+            int avail = static_cast<int>(g.acc / STEP + 1e-4);
+            int done = this->playBatch(pl, avail);
+            if (done <= 0) break; // todavia no hay tiempo para el grupo entero
+            g.acc -= STEP * static_cast<float>(done);
         }
         updatePercent(pl);
         if (Mod::get()->getSettingValue<bool>("debug-draw")) {
