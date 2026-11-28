@@ -8,7 +8,7 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.13.0",
+	"version": "v1.14.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
 	"tags": [
@@ -77,6 +77,12 @@
 			"default": true,
 			"name": "Guardar soluciones",
 			"description": "Guarda la solucion de cada nivel (y el progreso mientras resuelve) para no empezar de cero la proxima vez y poder continuar niveles muy largos."
+		},
+		"use-macros": {
+			"type": "bool",
+			"default": true,
+			"name": "Usar macros como punto de partida",
+			"description": "Si hay un macro de este nivel (.gdr / .gdr2) en la carpeta de macros del mod, o en las de Eclipse o xdBot, se usa como solucion inicial: se comprueba y solo se repara lo que falle."
 		},
 		"solve-budget-ms": {
 			"type": "int",

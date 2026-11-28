@@ -15,6 +15,7 @@
 #include "LoadingPopup.hpp"
 #include "Trajectory.hpp"
 #include "DebugDraw.hpp"
+#include "MacroImport.hpp"
 
 using namespace geode::prelude;
 
@@ -106,6 +107,12 @@ namespace {
         float cpSpacing = 45.f;
         acgdl::Humanizer hum;
         int liveDeaths = 0;
+
+        // macro importado como solucion inicial
+        bool macroMode = false;
+        acgdl::macro::Macro macro;
+        int macroTrial = 0;
+        std::vector<int> macroDeath;
         bool ignoreSaved = false;
         int lastSaveStep = 0;
     };
@@ -130,6 +137,11 @@ namespace {
         else if (f >= 12) minHold = std::max(4, minHold * 6 / 10);
         minRel = minHold;
     }
+
+    bool macrosOn() { return Mod::get()->getSettingValue<bool>("use-macros"); }
+
+    // Desfases probados al importar un macro (los bots cuentan los frames de forma distinta).
+    constexpr int MACRO_OFFS[5] = {-1, 0, 1, -2, 2};
 
     bool saveOn() { return Mod::get()->getSettingValue<bool>("save-solutions"); }
 
@@ -364,6 +376,20 @@ namespace {
             st.diag = fmt::format("Solucion guardada encontrada ({} pasos): verificando...", g.inputs.size());
             log::info("[AutoComplete] solucion guardada: {} pasos", g.inputs.size());
             startReplay(pl, static_cast<int>(g.inputs.size()), true);
+        } else if (macrosOn() && !g.ignoreSaved) {
+            // sin solucion guardada: se busca un macro de este nivel (carpeta de macros, Eclipse, xdBot)
+            std::string lname = pl->m_level ? std::string(pl->m_level->m_levelName) : std::string();
+            int lid = pl->m_level ? pl->m_level->m_levelID.value() : 0;
+            if (acgdl::macro::find(lname, lid, g.macro)) {
+                g.macroMode = true;
+                g.macroTrial = 0;
+                g.macroDeath.clear();
+                g.inputs = acgdl::macro::toInputs(g.macro, MACRO_OFFS[0]);
+                st.diag = fmt::format("Macro encontrado: {} ({} pulsaciones). Verificando...",
+                    g.macro.file, g.macro.events.size());
+                log::info("[AutoComplete] macro '{}' ({} eventos, {} pasos)", g.macro.file, g.macro.events.size(), g.inputs.size());
+                startReplay(pl, static_cast<int>(g.inputs.size()), true);
+            }
         }
         g.ignoreSaved = false;
     }
@@ -410,6 +436,27 @@ namespace {
 
     // La repeticion desde cero fallo en el paso k: se conserva lo verificado antes y se resuelve de nuevo desde ahi.
     void repair(PlayLayer* pl, int k) {
+        // importando un macro: se prueba cada desfase y se queda el que llega mas lejos
+        if (g.macroMode) {
+            g.macroDeath.push_back(k);
+            g.macroTrial++;
+            int n = static_cast<int>(sizeof(MACRO_OFFS) / sizeof(MACRO_OFFS[0]));
+            if (g.macroTrial < n) {
+                g.inputs = acgdl::macro::toInputs(g.macro, MACRO_OFFS[g.macroTrial]);
+                acgdl::stats().diag = fmt::format("Macro {}: probando desfase {} ({} de {})...",
+                    g.macro.file, MACRO_OFFS[g.macroTrial], g.macroTrial + 1, n);
+                startReplay(pl, static_cast<int>(g.inputs.size()), true);
+                return;
+            }
+            int best = 0;
+            for (int i = 1; i < n; i++) {
+                if (g.macroDeath[static_cast<size_t>(i)] > g.macroDeath[static_cast<size_t>(best)]) best = i;
+            }
+            g.inputs = acgdl::macro::toInputs(g.macro, MACRO_OFFS[best]);
+            k = g.macroDeath[static_cast<size_t>(best)];
+            g.macroMode = false;
+            log::info("[AutoComplete] macro: mejor desfase {} (llega al paso {})", MACRO_OFFS[best], k);
+        }
         g.verifyFails++;
         acgdl::stats().diag = fmt::format("La repeticion fallo en el paso {} (x={}); reparando (intento {})...",
             k, pl->m_player1 ? static_cast<int>(pl->m_player1->getPositionX()) : 0, g.verifyFails);
