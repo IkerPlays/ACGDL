@@ -1,35 +1,41 @@
 # Auto Complete (Geode)
 
-Mod de Geode para Geometry Dash (PC y móvil) que **lee el nivel al entrar** y lo juega solo.
+Mod de Geode para Geometry Dash 2.2091 (PC y móvil) que **lee el nivel, lo resuelve en segundo plano y lo ejecuta solo**.
 
-## Qué hace
+## Cómo funciona
 
-1. **Lee el nivel**: al cargar, escanea todos los objetos y los clasifica (pinchos, bloques, orbes, pads) y muestra un resumen.
-2. **Se autocompleta**:
-   - Cubo / robot: salta pinchos (centrando el salto en grupos), paredes y pulsa orbes.
-   - Bola / spider: cambia de lado antes de los pinchos.
-   - Nave, wave, UFO, swing: buscan el pasillo libre entre obstáculos.
-   - Los pads se activan solos.
-3. **Modo rescate** (opcional): si el bot fallaría, ignora la muerte para que el nivel se complete igual. Ese intento **no se guarda**.
-4. Botón **Auto: ON/OFF** en el menú de pausa (táctil) y ajustes en el menú del mod.
+1. **Lee el nivel** al entrar: pinchos, bloques, rampas, orbes, pads y portales.
+2. **Pantalla de carga**: resuelve el nivel entero en segundo plano (física a 240 Hz, sin dibujar) probando pulsaciones con checkpoints del modo práctica y retrocediendo cuando falla.
+3. **Verifica** la solución repitiéndola desde cero; si falla en un punto, repara solo ese tramo.
+4. **La ejecuta de verdad** (se ve jugar solo).
 
-## Ajustes
+Con el **simulador de trayectoria** (la técnica de los mods *Show Trajectory*) el bot prueba cada decisión sobre un jugador falso con las colisiones reales del juego y elige las pulsaciones que sobreviven. Recuerda los planes que fallaron para no repetirlos. En el modo directo (botón *Saltar*) también lo usa y aprende entre intentos.
 
-| Ajuste | Por defecto | Descripción |
-|---|---|---|
-| Auto-completar niveles | ON | Activa el bot al entrar a un nivel |
-| Mostrar resumen del nivel | ON | Notificación con lo leído |
-| Modo rescate | ON | Ignora muertes que el bot no pueda evitar |
-| Modo seguro | ON | No guarda progreso ni sube records mientras juega el bot |
+## Panel
+
+**F8** en PC, botón **AC** en el menú principal, o **Panel AC** en la pausa.
+
+| Ajuste | Qué hace |
+|---|---|
+| Auto-completar | Activa el bot al entrar a un nivel |
+| Resolver en segundo plano | Pantalla de carga + ejecución real (si no, juega en directo) |
+| Simulador de trayectoria | Predice caminos con un jugador falso |
+| Simulador: orbes y pads | Incluye orbes y pads en la simulación |
+| Resumen del nivel | Muestra lo leído |
+| Modo seguro | No guarda progreso ni records |
+| Entradas humanas | Pulsaciones y pausas con duración mínima, sin temblor |
+| Dibujar hitboxes | Depuración: hitboxes que ve el bot y la trayectoria prevista |
 
 ## Compilar
 
-El workflow `.github/workflows/build.yml` compila en GitHub Actions para Windows, macOS, iOS, Android 32 y Android 64 y junta todo en un único `.geode`.
+El workflow de GitHub Actions compila para Windows, macOS, iOS, Android32 y Android64 y publica un release con el `.geode` (la versión sale de `mod.json`).
 
-1. Sube a GitHub (cada push dispara el build) o ve a **Actions → Build Geode Mod → Run workflow**.
-2. Descarga el artifact **Build Output** → `ikerplays.autocomplete.geode`.
-3. Impórtalo: en PC, copia el `.geode` a `Geometry Dash/geode/mods/`; en Android, a `Android/media/com.geode.launcher/game/geode/mods/` (o ábrelo con el launcher de Geode).
+## Herramientas
+
+`tools/analyze_gmd.py nivel.gmd` lista los modos de juego, orbes, pads y velocidades de un nivel exportado con GDShare.
 
 ## Limitaciones
 
-Es un bot por reglas (no una simulación exacta), así que niveles muy difíciles (timings de frames, dual con modos distintos, gaps sin suelo) pueden requerir el modo rescate.
+- La ejecución corre en modo práctica, así que **no cuenta como nivel completado**.
+- En iOS el simulador de trayectoria no está disponible.
+- Dual, mirror y portales a mitad de simulación no están modelados al 100 %.
