@@ -1,13 +1,14 @@
 #pragma once
 
 #include <Geode/Geode.hpp>
+#include <Geode/ui/NineSlice.hpp>
 
 namespace acgdl {
 
     // Pantalla negra de carga mientras el bot resuelve el nivel en segundo plano.
     class LoadingPopup : public geode::Popup {
     protected:
-        cocos2d::CCLayerColor* m_fill = nullptr;
+        geode::NineSlice* m_fillNode = nullptr;
         cocos2d::CCLabelBMFont* m_percent = nullptr;
         cocos2d::CCLabelBMFont* m_status = nullptr;
         cocos2d::CCLabelBMFont* m_stats = nullptr;

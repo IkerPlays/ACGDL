@@ -1,6 +1,8 @@
 #include "Panel.hpp"
-#include <Geode/ui/Toggler.hpp>
 #include "BotState.hpp"
+
+#include <Geode/ui/NineSlice.hpp>
+#include <Geode/ui/Toggler.hpp>
 
 using namespace geode::prelude;
 
@@ -11,7 +13,7 @@ namespace acgdl {
     static char const* phaseName(int p) {
         switch (p) {
             case 1: return "Resolviendo el nivel...";
-            case 2: return "Ejecutando solucion";
+            case 2: return "Ejecutando la solucion";
             case 3: return "Jugando en directo";
             default: return "En espera";
         }
@@ -22,72 +24,95 @@ namespace acgdl {
             case 1: return {255, 200, 60};
             case 2: return {90, 235, 130};
             case 3: return {110, 190, 255};
-            default: return {190, 190, 190};
+            default: return {190, 190, 200};
         }
     }
 
-    static void addRow(CCLayer* layer, int row, char const* title, char const* desc, char const* key) {
-        float y = 167.f - row * 46.f;
+    struct Entry {
+        char const* title;
+        char const* desc;
+        char const* key;
+    };
 
-        auto bg = CCLayerColor::create({0, 0, 0, 70});
-        bg->setContentSize({300.f, 40.f});
-        bg->ignoreAnchorPointForPosition(false);
-        bg->setAnchorPoint({0.5f, 0.5f});
-        layer->addChildAtPosition(bg, Anchor::Center, {0.f, y});
+    // Dos columnas de tarjetas, caben en la pantalla de GD (320 de alto).
+    static void addCard(CCLayer* layer, float cx, float cy, Entry const& e) {
+        auto bg = NineSlice::create("square02b_001.png");
+        bg->setContentSize({206.f, 28.f});
+        bg->setColor({0, 0, 0});
+        bg->setOpacity(95);
+        layer->addChildAtPosition(bg, Anchor::Center, {cx, cy});
 
-        auto t = CCLabelBMFont::create(title, "bigFont.fnt");
-        t->setScale(0.40f);
-        layer->addChildAtPosition(t, Anchor::Center, {-142.f, y + 9.f}, {0.f, 0.5f});
+        auto name = CCLabelBMFont::create(e.title, "bigFont.fnt");
+        name->limitLabelWidth(118.f, 0.36f, 0.2f);
+        layer->addChildAtPosition(name, Anchor::Center, {cx - 98.f, cy}, {0.f, 0.5f});
 
-        auto d = CCLabelBMFont::create(desc, "chatFont.fnt");
-        d->setScale(0.62f);
-        d->setOpacity(170);
-        layer->addChildAtPosition(d, Anchor::Center, {-142.f, y - 9.f}, {0.f, 0.5f});
-
-        std::string k = key;
-        auto toggler = geode::Toggler::createWithStandardSprites(0.75f, [k](geode::Toggler*, bool on) {
-            Mod::get()->setSettingValue<bool>(k, on);
+        std::string title = e.title;
+        std::string desc = e.desc;
+        auto info = Button::createWithSpriteFrameName("GJ_infoIcon_001.png", [title, desc](Button*) {
+            FLAlertLayer::create(title.c_str(), desc, "OK")->show();
         });
-        toggler->setToggled(Mod::get()->getSettingValue<bool>(key));
-        layer->addChildAtPosition(toggler, Anchor::Center, {126.f, y});
+        info->setScale(0.5f);
+        layer->addChildAtPosition(info, Anchor::Center, {cx + 56.f, cy});
+
+        std::string key = e.key;
+        auto toggler = geode::Toggler::createWithStandardSprites(0.62f, [key](geode::Toggler*, bool on) {
+            Mod::get()->setSettingValue<bool>(key, on);
+        });
+        toggler->setToggled(Mod::get()->getSettingValue<bool>(e.key));
+        layer->addChildAtPosition(toggler, Anchor::Center, {cx + 84.f, cy});
     }
 
     bool Panel::init() {
-        if (!Popup::init(340.f, 502.f)) return false;
-        this->setTitle("Auto Complete");
+        if (!Popup::init(440.f, 300.f)) return false;
+        this->setTitle("Auto Complete", "goldFont.fnt", 0.8f, 20.f);
+
+        // estado
+        auto chip = NineSlice::create("square02b_001.png");
+        chip->setContentSize({230.f, 22.f});
+        chip->setColor({0, 0, 0});
+        chip->setOpacity(110);
+        m_mainLayer->addChildAtPosition(chip, Anchor::Center, {0.f, 104.f});
 
         m_state = CCLabelBMFont::create(phaseName(stats().phase), "bigFont.fnt");
-        m_state->setScale(0.42f);
+        m_state->limitLabelWidth(210.f, 0.38f, 0.2f);
         m_state->setColor(phaseColor(stats().phase));
-        m_mainLayer->addChildAtPosition(m_state, Anchor::Center, {0.f, 209.f});
+        m_mainLayer->addChildAtPosition(m_state, Anchor::Center, {0.f, 104.f});
 
-        addRow(m_mainLayer, 0, "Auto-completar", "El bot juega y resuelve cada nivel al entrar", "auto-play");
-        addRow(m_mainLayer, 1, "Resolver en segundo plano", "Pantalla de carga y luego ejecucion real", "rewind");
-        addRow(m_mainLayer, 2, "Simulador de trayectoria", "Simula caminos para elegir pulsaciones", "trajectory");
-        addRow(m_mainLayer, 3, "Simulador: orbes y pads", "Incluye orbes y pads en la simulacion", "trajectory-orbs");
-        addRow(m_mainLayer, 4, "Resumen del nivel", "Muestra lo leido: pinchos, orbes, pads...", "show-info");
-        addRow(m_mainLayer, 5, "Modo seguro", "No guarda progreso ni records", "safe-mode");
-        addRow(m_mainLayer, 6, "Entradas humanas", "Sin toques de 4 ms ni temblor", "human");
-        addRow(m_mainLayer, 7, "Dibujar hitboxes", "Muestra lo que ve el bot y su trayectoria", "debug-draw");
+        static Entry const left[] = {
+            {"Auto-completar", "El bot juega y resuelve cada nivel al entrar.", "auto-play"},
+            {"Resolver en 2o plano", "Pantalla de carga: resuelve el nivel entero y luego lo ejecuta. Sin esto juega en directo.", "rewind"},
+            {"Simulador", "Simula caminos con un jugador falso (como Show Trajectory) para elegir las pulsaciones que sobreviven.", "trajectory"},
+            {"Simulador: orbes", "Incluye orbes y pads en la simulacion.", "trajectory-orbs"},
+            {"Entradas humanas", "Las pulsaciones y las pausas duran un minimo para que parezca una persona jugando.", "human"},
+        };
+        static Entry const right[] = {
+            {"Modo seguro", "No guarda progreso ni records mientras juega el bot.", "safe-mode"},
+            {"Guardar soluciones", "Guarda la solucion y el progreso para continuar en otra sesion.", "save-solutions"},
+            {"Resumen del nivel", "Muestra lo que se ha leido del nivel al entrar.", "show-info"},
+            {"Dibujar hitboxes", "Depuracion: dibuja lo que ve el bot y la trayectoria prevista.", "debug-draw"},
+        };
+        float y0 = 66.f;
+        for (int i = 0; i < 5; i++) addCard(m_mainLayer, -107.f, y0 - i * 32.f, left[i]);
+        for (int i = 0; i < 4; i++) addCard(m_mainLayer, 107.f, y0 - i * 32.f, right[i]);
 
         auto again = Button::createWithNode(
-            ButtonSprite::create("Re-resolver", "goldFont.fnt", "GJ_button_01.png", 0.7f),
+            ButtonSprite::create("Re-resolver", "goldFont.fnt", "GJ_button_01.png", 0.6f),
             [](Button*) {
                 if (stats().inLevel) stats().resolveRequested = true;
             }
         );
-        m_mainLayer->addChildAtPosition(again, Anchor::Center, {-72.f, -204.f});
+        m_mainLayer->addChildAtPosition(again, Anchor::Center, {107.f, -62.f});
 
         auto close = Button::createWithNode(
             ButtonSprite::create("Cerrar", "goldFont.fnt", "GJ_button_06.png", 0.7f),
             [this](Button* b) { this->onClose(b); }
         );
-        m_mainLayer->addChildAtPosition(close, Anchor::Center, {72.f, -204.f});
+        m_mainLayer->addChildAtPosition(close, Anchor::Center, {0.f, -108.f});
 
         m_stats = CCLabelBMFont::create("", "chatFont.fnt");
         m_stats->setScale(0.6f);
         m_stats->setOpacity(170);
-        m_mainLayer->addChildAtPosition(m_stats, Anchor::Center, {0.f, -232.f});
+        m_mainLayer->addChildAtPosition(m_stats, Anchor::Center, {0.f, -136.f});
 
         this->schedule(schedule_selector(Panel::tick), 0.2f);
         this->tick(0.f);
@@ -99,7 +124,7 @@ namespace acgdl {
         m_state->setString(phaseName(st.phase));
         m_state->setColor(phaseColor(st.phase));
         m_stats->setString(st.inLevel
-            ? fmt::format("Progreso {}%  |  Reintentos {}  |  Pasos {}",
+            ? fmt::format("Progreso {}%   |   Reintentos {}   |   Pasos {}",
                 static_cast<int>(st.percent), st.attempts, st.steps).c_str()
             : "Entra a un nivel para ver estadisticas");
     }
