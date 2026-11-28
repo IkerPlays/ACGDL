@@ -76,6 +76,10 @@ namespace {
         // frames sin llamar a la fisica tras reiniciar el nivel (deja que el juego termine de armarse)
         int settle = 0;
 
+        // esperar a que el nivel arranque de verdad tras reiniciar desde el principio
+        bool needReady = false;
+        float readyWait = 0.f;
+
         // verificacion desde cero
         int replayUntil = 0;
         bool verifyFull = false;
@@ -98,6 +102,10 @@ namespace {
     bool botOn() { return Mod::get()->getSettingValue<bool>("auto-play"); }
     bool searchOn() { return Mod::get()->getSettingValue<bool>("rewind"); }
     bool safeOn() { return Mod::get()->getSettingValue<bool>("safe-mode"); }
+    bool levelReady(PlayLayer* pl) {
+        return pl->m_started && pl->m_player1 && !pl->m_player1->m_isLocked;
+    }
+
     bool trajSetting() { return Mod::get()->getSettingValue<bool>("trajectory"); }
 
     // Primer obstaculo no modelado (portal, orbe, pad) en el carril del jugador.
@@ -174,6 +182,8 @@ namespace {
         g.holding = false;
         g.mem.reset();
         restartClean(pl);
+        g.needReady = true;
+        g.readyWait = 0.f;
         g.settle = 4;
         log::info("[AutoComplete] modo directo");
     }
@@ -223,6 +233,8 @@ namespace {
         if (!pl->m_isPracticeMode) pl->togglePracticeMode(true);
         pl->resetLevelFromStart();
 
+        g.needReady = true;
+        g.readyWait = 0.f;
         g.trajOn = trajSetting() && acgdl::traj::init(pl);
         g.mpcDisabled = false;
         g.mpcPlan.clear();
@@ -269,6 +281,8 @@ namespace {
         mute(true);
         pl->removeAllCheckpoints();
         pl->resetLevelFromStart();
+        g.needReady = true;
+        g.readyWait = 0.f;
         g.settle = 3;
         log::info("[AutoComplete] repeticion desde cero: {} pasos (completa: {})", until, full);
         st.diag = full ? fmt::format("Verificando la solucion desde cero ({} pasos)...", until)
@@ -282,6 +296,8 @@ namespace {
     // La repeticion desde cero fallo en el paso k: se conserva lo verificado antes y se resuelve de nuevo desde ahi.
     void repair(PlayLayer* pl, int k) {
         g.verifyFails++;
+        acgdl::stats().diag = fmt::format("La repeticion fallo en el paso {} (x={}); reparando (intento {})...",
+            k, pl->m_player1 ? static_cast<int>(pl->m_player1->getPositionX()) : 0, g.verifyFails);
         if (g.verifyFails > 80) {
             goLive(pl);
             return;
@@ -312,6 +328,8 @@ namespace {
         // se ejecuta en el MISMO modo (practica) y con las mismas condiciones que la verificacion
         pl->removeAllCheckpoints();
         pl->resetLevelFromStart();
+        g.needReady = true;
+        g.readyWait = 0.f;
         g.settle = 4;
         log::info("[AutoComplete] solucion verificada: {} pasos, {} reintentos", g.inputs.size(), g.totalFails);
 
@@ -366,6 +384,10 @@ class $modify(ACPlayLayer, PlayLayer) {
         g.mem.reset();
 
         g.lastCpX = m_player1 ? m_player1->getPositionX() : -1000.f;
+        if (g.step == 0 || g.phase == PH_PLAY || g.phase == PH_LIVE) {
+            g.needReady = true;
+            g.readyWait = 0.f;
+        }
         if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
             auto fmod = FMODAudioEngine::sharedEngine();
             if (fmod) fmod->pauseAllMusic(true);
@@ -849,6 +871,20 @@ class $modify(ACBase, GJBaseGameLayer) {
         if (g.settle > 0) {
             g.settle--;
             return;
+        }
+
+        // el nivel tarda un instante (tiempo real) en arrancar tras reiniciar desde cero:
+        // hasta entonces no se avanza, para que simulacion y ejecucion empiecen en el mismo punto
+        if (g.needReady) {
+            g.readyWait += dt;
+            if (levelReady(pl)) {
+                g.needReady = false;
+            } else if (g.readyWait > 2.f) {
+                g.needReady = false;
+                log::warn("[AutoComplete] el nivel no marco inicio tras 2 s, se continua");
+            } else {
+                return;
+            }
         }
 
         if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {

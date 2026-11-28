@@ -271,6 +271,15 @@ namespace acgdl {
         mem.lastY = py;
         float vy = mem.vy;
 
+        // Dash: hay que mantener pulsado hasta que termine, o se cancela.
+        if (p->m_isDashing) return true;
+
+        // Robot: la altura del salto depende de cuanto se mantiene.
+        if (p->m_isRobot && mem.holdLeft > 0) {
+            mem.holdLeft--;
+            return true;
+        }
+
         // ---- Wave: mantener la altura del pasillo ----
         if (p->m_isDart) {
             float target = flyTarget(d, px, py, ups);
@@ -366,7 +375,10 @@ namespace acgdl {
             return wallAhead(d, px, qy, ups * 0.07f);
         };
 
-        if (evalFor(p)) return true;
+        if (evalFor(p)) {
+            if (p->m_isRobot) mem.holdLeft = 14;
+            return true;
+        }
 
         auto q2 = opts.p2;
         if (opts.dual && q2 && q2 != p && !q2->m_isShip && !q2->m_isBird && !q2->m_isDart && !q2->m_isSwing) {

@@ -13,6 +13,7 @@ namespace acgdl {
         bool inOrb = false;
         bool pressedOrb = false;
         int orbSteps = 0;
+        int holdLeft = 0;     // pasos que quedan de pulsacion mantenida (robot)
 
         void reset() { *this = BotMemory(); }
     };
