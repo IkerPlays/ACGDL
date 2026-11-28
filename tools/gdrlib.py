@@ -114,7 +114,10 @@ def parse_gdr2(data):
 
 def parse_gdr1(data):
     import msgpack
-    d = msgpack.unpackb(data, raw=False, strict_map_key=False)
+    # algunos macros traen datos sobrantes tras el objeto principal: se lee solo el primero
+    d = msgpack.Unpacker(raw=False, strict_map_key=False, max_buffer_size=len(data) + 1)
+    d.feed(data)
+    d = d.unpack()
     inputs = []
     for i in d.get('inputs', []):
         inputs.append({'frame': i.get('frame', 0), 'button': i.get('btn', i.get('button', 1)),
