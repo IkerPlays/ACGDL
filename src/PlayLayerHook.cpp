@@ -103,6 +103,7 @@ namespace {
         bool lastPathOk = false;
         float bestPercent = 0.f;
         bool trajChecked = false;
+        acgdl::Humanizer hum;
     };
 
     Run g;
@@ -112,6 +113,14 @@ namespace {
     bool safeOn() { return Mod::get()->getSettingValue<bool>("safe-mode"); }
     bool levelReady(PlayLayer* pl) {
         return pl->m_started && pl->m_player1 && !pl->m_player1->m_isLocked;
+    }
+
+    // Parametros de las entradas humanas (en pasos de 1/240 s).
+    bool humanOn() { return Mod::get()->getSettingValue<bool>("human"); }
+    void humanParams(int& minHold, int& minRel) {
+        int64_t ms = Mod::get()->getSettingValue<int64_t>("human-ms");
+        minHold = std::max<int>(1, static_cast<int>(ms * 240 / 1000));
+        minRel = std::max<int>(1, minHold * 3 / 4);
     }
 
     bool trajSetting() { return Mod::get()->getSettingValue<bool>("trajectory"); }
@@ -394,6 +403,7 @@ class $modify(ACPlayLayer, PlayLayer) {
 
         this->handleButton(false, 1, true);
         g.holding = false;
+        g.hum = acgdl::Humanizer();
         g.mem.reset();
         g.mpcPlan.clear();
         g.mpcIdx = 0;
@@ -670,7 +680,12 @@ class $modify(ACBase, GJBaseGameLayer) {
         std::vector<uint8_t> acts;
         std::vector<cocos2d::CCPoint> path;
 
+        int minHold = 1, minRel = 1;
+        bool human = humanOn();
+        humanParams(minHold, minRel);
+
         auto run = [&](Cand const& c) {
+            acgdl::Humanizer hm = g.hum;
             acgdl::BotMemory mem = g.mem;
             acgdl::DecideOpts oo = o;
             bool last = h0;
@@ -688,6 +703,7 @@ class $modify(ACBase, GJBaseGameLayer) {
                     if (c.kind == 4 && i >= c.t && i < c.t + c.d) w = false;
                     if (c.kind == 5 && ((i >= c.t && i < c.t + c.d) || (i >= c.t2 && i < c.t2 + c.d2))) w = true;
                 }
+                if (human) w = acgdl::humanize(hm, w, minHold, minRel, f->m_isDashing);
                 last = w;
                 if (i < n) acts[static_cast<size_t>(i)] = w ? 1 : 0;
                 return w;
@@ -834,6 +850,12 @@ class $modify(ACBase, GJBaseGameLayer) {
             }
         }
 
+        {
+            int minHold = 1, minRel = 1;
+            humanParams(minHold, minRel);
+            if (humanOn()) want = acgdl::humanize(g.hum, want, minHold, minRel, p->m_isDashing);
+            else g.hum.cur = want;
+        }
         setHold(pl, want);
         g.inputs.push_back(want ? 1 : 0);
 
@@ -918,6 +940,10 @@ class $modify(ACBase, GJBaseGameLayer) {
                         g.trajOn = trajSetting() && acgdl::traj::init(pl);
                     }
                     if (g.trajOn && !g.mpcDisabled) want = this->mpcStep(pl, p, want, o);
+                    int minHold = 1, minRel = 1;
+                    humanParams(minHold, minRel);
+                    if (humanOn()) want = acgdl::humanize(g.hum, want, minHold, minRel, p->m_isDashing);
+                    else g.hum.cur = want;
                 }
             }
             setHold(pl, want);

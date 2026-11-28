@@ -8,7 +8,7 @@
 	},
 	"id": "ikerplays.autocomplete",
 	"name": "Auto Complete",
-	"version": "v1.9.0",
+	"version": "v1.10.0",
 	"developer": "IkerPlays",
 	"description": "Lee el nivel al entrar y se lo pasa solo: salta pinchos, pulsa orbes y controla nave, ufo y wave. Funciona en PC y móvil.",
 	"tags": [
@@ -51,6 +51,20 @@
 			"default": true,
 			"name": "Modo seguro (no guardar progreso)",
 			"description": "Mientras el bot juega no se guarda progreso ni se suben records. Desactivarlo es bajo tu responsabilidad."
+		},
+		"human": {
+			"type": "bool",
+			"default": true,
+			"name": "Entradas humanas",
+			"description": "Las pulsaciones y las pausas duran un minimo (sin toques de 4 ms ni temblor) para que el bot se vea como una persona jugando."
+		},
+		"human-ms": {
+			"type": "int",
+			"default": 45,
+			"min": 10,
+			"max": 150,
+			"name": "Duracion minima de pulsacion (ms)",
+			"description": "Cuanto dura como minimo una pulsacion. Las pausas duran un 75% de eso. Mas alto = mas humano pero menos preciso."
 		},
 		"debug-draw": {
 			"type": "bool",

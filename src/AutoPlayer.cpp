@@ -283,7 +283,9 @@ namespace acgdl {
         // ---- Wave: mantener la altura del pasillo ----
         if (p->m_isDart) {
             float target = flyTarget(d, px, py, ups);
-            bool wantUp = py < target - 2.f;
+            // histeresis: no cambia de direccion por diferencias minimas (evita el temblor)
+            bool prevUp = flipped ? !opts.wasHolding : opts.wasHolding;
+            bool wantUp = prevUp ? (py < target + 4.f) : (py < target - 4.f);
             return flipped ? !wantUp : wantUp;
         }
 
@@ -291,7 +293,8 @@ namespace acgdl {
         if (p->m_isShip) {
             float target = flyTarget(d, px, py, ups);
             float pred = py + vy * 30.f;
-            bool wantUp = pred < target;
+            bool prevUp = flipped ? !opts.wasHolding : opts.wasHolding;
+            bool wantUp = prevUp ? (pred < target + 6.f) : (pred < target - 6.f);
             return flipped ? !wantUp : wantUp;
         }
 
@@ -300,7 +303,7 @@ namespace acgdl {
             float target = flyTarget(d, px, py, ups);
             float pred = py + vy * 30.f;
             bool need = flipped ? (pred > target + 8.f) : (pred < target - 8.f);
-            return need && (step % 8 < 2);
+            return need && (step % 16 < 6);
         }
 
         // ---- Swing: cambia de direccion al acercarse a los limites ----

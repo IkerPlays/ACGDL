@@ -18,6 +18,25 @@ namespace acgdl {
         void reset() { *this = BotMemory(); }
     };
 
+    // Hace las pulsaciones parecidas a las de una persona: una pulsacion o una pausa
+    // no pueden ser mas cortas que un minimo (en pasos de 1/240 s).
+    struct Humanizer {
+        bool cur = false;
+        int since = 1000;
+    };
+
+    inline bool humanize(Humanizer& h, bool want, int minHold, int minRelease, bool force) {
+        if (want != h.cur) {
+            int need = h.cur ? minHold : minRelease;
+            if (force || h.since >= need) {
+                h.cur = want;
+                h.since = 0;
+            }
+        }
+        h.since++;
+        return h.cur;
+    }
+
     struct DecideOpts {
         bool wasHolding = false;
         bool ignoreOrbs = false;
