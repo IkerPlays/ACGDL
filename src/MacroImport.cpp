@@ -298,11 +298,11 @@ namespace acgdl::macro {
 
     bool find(std::string const& levelName, int levelId, Macro& out) {
         std::vector<fs::path> dirs;
-        dirs.push_back(Mod::get()->getSaveDir() / "macros");
+        dirs.push_back(fs::path(folder()));
         for (char const* id : {"eclipse.eclipse-menu", "zilko.xdbot"}) {
             if (auto mod = Loader::get()->getLoadedMod(id)) {
-                dirs.push_back(mod->getSaveDir());
-                dirs.push_back(mod->getConfigDir(false));
+                dirs.push_back(fs::path(mod->getSaveDir().string()));
+                dirs.push_back(fs::path(mod->getConfigDir(false).string()));
             }
         }
 
@@ -368,6 +368,6 @@ namespace acgdl::macro {
 
 $execute {
     std::error_code ec;
-    std::filesystem::create_directories(Mod::get()->getSaveDir() / "macros", ec);
+    std::filesystem::create_directories(std::filesystem::path(acgdl::macro::folder()), ec);
     log::info("[AutoComplete] carpeta de macros: {}", acgdl::macro::folder());
 }
