@@ -193,6 +193,17 @@ namespace {
 
     void startReplay(PlayLayer* pl, int until, bool full);
 
+    // Cada modo tiene su ritmo natural: en wave y nave se cambia mucho mas rapido que al saltar.
+    void humanForPlayer(PlayerObject* q, int& mh, int& mr) {
+        if (q->m_isDart) {
+            mh = std::max(3, mh / 3);
+            mr = std::max(3, mr / 3);
+        } else if (q->m_isShip || q->m_isBird || q->m_isSwing) {
+            mh = std::max(3, mh / 2);
+            mr = std::max(3, mr / 2);
+        }
+    }
+
     bool trajSetting() { return Mod::get()->getSettingValue<bool>("trajectory"); }
 
     // Primer obstaculo no modelado (portal, orbe, pad) en el carril del jugador.
@@ -611,7 +622,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         g.mutType = static_cast<int>(nextRand() % 12);
         g.orbSeed = nextRand();
         g.orbSkipPct = (nextRand() % 3 == 0) ? 0 : static_cast<int>(nextRand() % 70);
-        g.orbDelay = (nextRand() % 2 == 0) ? 0 : static_cast<int>(nextRand() % 10);
+        g.orbDelay = (nextRand() % 2 == 0) ? 0 : static_cast<int>(nextRand() % 15) - 6;
         g.mutFlip = false;
         g.pulseLeft = 0;
         g.mutDelay = 4 + static_cast<int>(nextRand() % 25);
@@ -712,7 +723,7 @@ class $modify(ACBase, GJBaseGameLayer) {
             }
         }
         int n = std::min(HORIZON, static_cast<int>((stopX - px) / perStep));
-        if (n < 36) return base; // demasiado cerca de algo que el simulador no modela
+        if (n < 18) return base; // demasiado cerca de algo que el simulador no modela
 
         // objetos cuyo estado se restaura tras simular
         std::vector<GameObject*> touch;
@@ -792,7 +803,11 @@ class $modify(ACBase, GJBaseGameLayer) {
                     if (c.kind == 4 && i >= c.t && i < c.t + c.d) w = false;
                     if (c.kind == 5 && ((i >= c.t && i < c.t + c.d) || (i >= c.t2 && i < c.t2 + c.d2))) w = true;
                 }
-                if (human) w = acgdl::humanize(hm, w, minHold, minRel, f->m_isDashing);
+                if (human) {
+                    int mh = minHold, mr = minRel;
+                    humanForPlayer(f, mh, mr);
+                    w = acgdl::humanize(hm, w, mh, mr, f->m_isDashing);
+                }
                 last = w;
                 if (i < n) acts[static_cast<size_t>(i)] = w ? 1 : 0;
                 return w;
@@ -942,6 +957,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         {
             int minHold = 1, minRel = 1;
             humanParams(minHold, minRel);
+            humanForPlayer(p, minHold, minRel);
             if (humanOn()) want = acgdl::humanize(g.hum, want, minHold, minRel, p->m_isDashing);
             else g.hum.cur = want;
         }
@@ -1037,6 +1053,7 @@ class $modify(ACBase, GJBaseGameLayer) {
                     if (g.trajOn && !g.mpcDisabled) want = this->mpcStep(pl, p, want, o);
                     int minHold = 1, minRel = 1;
                     humanParams(minHold, minRel);
+                    humanForPlayer(p, minHold, minRel);
                     if (humanOn()) want = acgdl::humanize(g.hum, want, minHold, minRel, p->m_isDashing);
                     else g.hum.cur = want;
                 }

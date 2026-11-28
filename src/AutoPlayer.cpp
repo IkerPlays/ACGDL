@@ -236,6 +236,64 @@ namespace acgdl {
             return std::isfinite(low) && std::isfinite(high) && high - low > 40.f;
         }
 
+        // Foso: el suelo bajo el jugador se acaba y hay algo a lo que llegar saltando
+        // (otra plataforma, un portal, un orbe o un pad). Devuelve true si hay que saltar YA.
+        bool pitJump(LevelData const& d, float px, float qy, bool qflip, float ups, float jumpDist) {
+            float surf = qflip ? qy + HALF : qy - HALF;
+            auto surfOf = [&](Box const& b) { return qflip ? b.minY : b.maxY; };
+
+            // suelo bajo el jugador
+            float edge = 0.f;
+            bool found = false;
+            for (size_t i = firstFrom(d.solids, px - 120.f - d.maxSolidW); i < d.solids.size(); i++) {
+                Box const& b = d.solids[i];
+                if (b.minX > px + HALF) break;
+                if (b.maxX < px - HALF) continue;
+                if (std::fabs(surfOf(b) - surf) > 4.f) continue;
+                if (!found || b.maxX > edge) {
+                    edge = b.maxX;
+                    found = true;
+                }
+            }
+            if (!found) return false;
+
+            // extender el borde con bloques contiguos al mismo nivel
+            for (int iter = 0; iter < 200; iter++) {
+                bool grew = false;
+                for (size_t i = firstFrom(d.solids, edge - 4.f); i < d.solids.size(); i++) {
+                    Box const& b = d.solids[i];
+                    if (b.minX > edge + 4.f) break;
+                    if (std::fabs(surfOf(b) - surf) > 4.f) continue;
+                    if (b.maxX > edge + 0.5f) {
+                        edge = b.maxX;
+                        grew = true;
+                    }
+                }
+                if (!grew) break;
+            }
+
+            float distToEdge = edge - (px + HALF);
+            if (distToEdge > ups * 0.05f) return false;
+
+            // hay algo a lo que llegar al otro lado?
+            float reach = jumpDist * 0.9f;
+            bool target = false;
+            for (size_t i = firstFrom(d.solids, edge + 4.f); i < d.solids.size() && !target; i++) {
+                Box const& b = d.solids[i];
+                if (b.minX > edge + reach) break;
+                if (std::fabs(surfOf(b) - surf) <= 35.f) target = true;
+            }
+            for (size_t i = 0; i < d.stops.size() && !target; i++) {
+                Stop const& st = d.stops[i];
+                if (st.box.minX > edge + reach) break;
+                if (st.box.maxX < edge) continue;
+                if (st.box.maxY >= qy - 60.f && st.box.minY <= qy + 120.f) target = true;
+            }
+            if (!target) return false;
+
+            return distToEdge <= ups * 0.02f;
+        }
+
         // Al cambiar de lado (bola/spider), el otro lado tiene pinchos justo donde aterrizaria?
         bool oppositeBlocked(LevelData const& d, float px, float py, float ups) {
             float low, high;
@@ -336,7 +394,12 @@ namespace acgdl {
                 }
                 mem.orbSteps++;
                 if (!mem.pressedOrb) {
-                    if (mem.orbSteps <= opts.orbDelay) return false;
+                    // una persona pulsa cuando el icono esta sobre el orbe: se pulsa en su centro
+                    // (la busqueda puede adelantar o retrasar unos pasos)
+                    Box const& ob = d.orbs[static_cast<size_t>(oi)];
+                    float cx = (ob.minX + ob.maxX) * 0.5f;
+                    float perStep = ups / 240.f;
+                    if (px < cx + opts.orbDelay * perStep) return false;
                     if (opts.wasHolding) return false; // soltar primero
                     mem.pressedOrb = true;
                     return true;
@@ -375,7 +438,8 @@ namespace acgdl {
                     return true;
                 }
             }
-            return wallAhead(d, px, qy, ups * 0.07f);
+            if (wallAhead(d, px, qy, ups * 0.07f)) return true;
+            return pitJump(d, px, qy, qflip, ups, jumpDist);
         };
 
         if (evalFor(p)) {
