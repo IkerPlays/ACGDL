@@ -478,6 +478,7 @@ namespace {
         st.steps = static_cast<int>(g.inputs.size());
         st.percent = 0.f;
         saveSolution(pl, true);
+        g.macroMode = false;
         mute(false);
         g.step = 0;
         g.acc = 0.0;
