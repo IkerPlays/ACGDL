@@ -15,13 +15,13 @@ namespace acgdl::traj {
         PlayerCheckpoint* s_cp = nullptr;
         bool s_active = false;
         bool s_cancel = false;
-        float s_delta = 1.f / 240.f;
+        float s_delta = 0.25f; // en GD 2.2 el jugador se actualiza en unidades de frame a 60 fps (0.25 = un paso a 240 Hz)
     }
 
     bool active() { return s_active; }
     bool ready() { return s_fake != nullptr && s_cp != nullptr; }
     float stepDelta() { return s_delta; }
-    void setDelta(float dt) { if (dt > 0.f && dt < 0.1f) s_delta = dt; }
+    void setDelta(float dt) { if (dt > 0.f && dt < 4.f) s_delta = dt; }
     void markDeath() { s_cancel = true; }
 
     void reset() {

@@ -555,7 +555,7 @@ class $modify(ACBase, GJBaseGameLayer) {
             g.checks++;
             auto pos = p->getPosition();
             if (std::fabs(pos.x - g.pred.x) > 5.f || std::fabs(pos.y - g.pred.y) > 5.f) g.mismatch++;
-            if (g.checks >= 40 && g.mismatch * 10 > g.checks * 6) {
+            if (g.checks >= 40 && g.mismatch * 100 > g.checks * 35) {
                 g.mpcDisabled = true;
                 acgdl::stats().diag = "Simulador de trayectoria desactivado: no coincide con el juego";
                 log::warn("[AutoComplete] simulador desactivado ({} de {} predicciones fallaron)", g.mismatch, g.checks);
