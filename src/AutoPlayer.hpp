@@ -19,6 +19,8 @@ namespace acgdl {
     struct DecideOpts {
         bool wasHolding = false;
         bool ignoreOrbs = false;
+        bool dual = false;
+        PlayerObject* p2 = nullptr;
     };
 
     // Decide si el boton de salto debe estar pulsado en este paso de fisica (1/240 s).

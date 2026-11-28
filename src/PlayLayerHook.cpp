@@ -226,6 +226,8 @@ namespace {
         pl->resetLevelFromStart();
         g.settle = 3;
         log::info("[AutoComplete] repeticion desde cero: {} pasos (completa: {})", until, full);
+        st.diag = full ? fmt::format("Verificando la solucion desde cero ({} pasos)...", until)
+                       : fmt::format("Reparando: repitiendo {} pasos ya verificados...", until);
 
         if (!wasLoading) {
             if (auto popup = acgdl::LoadingPopup::create()) popup->show();
@@ -407,7 +409,7 @@ class $modify(ACBase, GJBaseGameLayer) {
         int len = std::max(0, g.deathStep - target);
         int back = std::min(g.fails / 6, 16);
         g.mutBase = target;
-        g.mutType = static_cast<int>(nextRand() % 10);
+        g.mutType = static_cast<int>(nextRand() % 12);
         g.mutFlip = false;
         g.pulseLeft = 0;
         g.mutDelay = 4 + static_cast<int>(nextRand() % 25);
@@ -422,12 +424,39 @@ class $modify(ACBase, GJBaseGameLayer) {
                 int dur = 2 + static_cast<int>(nextRand() % 40);
                 g.sched.emplace_back(start, dur);
             }
-        } else if (g.mutType >= 8) {
+        } else if (g.mutType == 8 || g.mutType == 9) {
             // patron periodico de mantener/soltar (util en nave y wave)
             g.mutLeft = std::clamp(len + 40, 100, 1200) + static_cast<int>(nextRand() % 80);
             g.perP = 4 + static_cast<int>(nextRand() % 56);
             g.perD = 1 + static_cast<int>(nextRand() % static_cast<uint32_t>(g.perP - 1));
             g.perPhase = static_cast<int>(nextRand() % static_cast<uint32_t>(g.perP));
+        } else if (g.mutType >= 10) {
+            // pulsaciones alineadas con los orbes de la ventana (combos de orbes)
+            g.mutLeft = std::clamp(len + 40, 100, 1200) + static_cast<int>(nextRand() % 80);
+            g.sched.clear();
+            auto p1 = pl->m_player1;
+            float px0 = p1 ? p1->getPositionX() : 0.f;
+            float spd = (p1 && p1->m_playerSpeed > 0.f) ? p1->m_playerSpeed : 0.9f;
+            float perStep = spd * 346.2f / 240.f;
+            float reach = px0 + static_cast<float>(len + 30) * perStep + 40.f;
+            for (auto const& o : g.data.orbs) {
+                if (o.maxX < px0) continue;
+                if (o.minX > reach) break;
+                if (rand01() < 0.8f) {
+                    int t0 = static_cast<int>((o.minX - 10.f - 15.f - px0) / perStep);
+                    int jitter = static_cast<int>(nextRand() % 11) - 4;
+                    int dur = (nextRand() % 2 == 0) ? 3 + static_cast<int>(nextRand() % 8)
+                                                    : 20 + static_cast<int>(nextRand() % 80);
+                    g.sched.emplace_back(std::max(0, t0 + jitter), dur);
+                }
+            }
+            // y alguna pulsacion extra al azar
+            int extra = static_cast<int>(nextRand() % 3);
+            for (int i = 0; i < extra; i++) {
+                g.sched.emplace_back(
+                    static_cast<int>(nextRand() % static_cast<uint32_t>(len + 20)),
+                    2 + static_cast<int>(nextRand() % 40));
+            }
         } else {
             g.mutLeft = 160 + back * 40 + static_cast<int>(nextRand() % 300);
         }
@@ -461,6 +490,8 @@ class $modify(ACBase, GJBaseGameLayer) {
         acgdl::DecideOpts o;
         o.wasHolding = g.holding;
         o.ignoreOrbs = g.mutLeft > 0 && g.mutType == 4;
+        o.dual = pl->m_gameState.m_isDualMode;
+        o.p2 = pl->m_player2;
         bool want = acgdl::decideHold(p, g.data, g.mem, g.step, o);
 
         g.hist.push_back(want ? 1 : 0);
@@ -491,7 +522,9 @@ class $modify(ACBase, GJBaseGameLayer) {
                     break;
                 case 5:
                 case 6:
-                case 7: {
+                case 7:
+                case 10:
+                case 11: {
                     int t = g.step - g.mutBase;
                     want = false;
                     for (auto const& pr : g.sched) {
@@ -584,6 +617,8 @@ class $modify(ACBase, GJBaseGameLayer) {
             } else {
                 acgdl::DecideOpts o;
                 o.wasHolding = g.holding;
+                o.dual = pl->m_gameState.m_isDualMode;
+                o.p2 = pl->m_player2;
                 want = acgdl::decideHold(p, g.data, g.mem, g.step, o);
             }
             setHold(pl, want);

@@ -33,12 +33,12 @@ namespace acgdl {
         }
 
         // Agrupa pinchos pegados que estan en el mismo carril que el jugador.
-        Cluster findCluster(std::vector<Box> const& v, float px, float py, float look, float gap) {
+        Cluster findCluster(std::vector<Box> const& v, float px, float py, float look, float gap, float below = 18.f, float above = 22.f) {
             Cluster c;
             for (size_t i = firstFrom(v, px - 10.f); i < v.size(); i++) {
                 Box const& b = v[i];
                 if (b.minX > px + look) break;
-                if (!inLane(b, py, 18.f, 22.f)) continue;
+                if (!inLane(b, py, below, above)) continue;
                 if (!c.found) {
                     c.found = true;
                     c.start = b.minX;
@@ -216,34 +216,42 @@ namespace acgdl {
             mem.pressedOrb = false;
         }
 
-        bool grounded = p->m_isOnGround;
-        if (!grounded) return false;
+        // Evalua pinchos y paredes para un jugador (en dual un clic afecta a los dos).
+        auto evalFor = [&](PlayerObject* q) -> bool {
+            if (!q->m_isOnGround) return false;
+            float qy = q->getPositionY();
+            bool qflip = q->m_isUpsideDown;
+            float below = qflip ? 22.f : 18.f; // con gravedad invertida el suelo esta arriba
+            float above = qflip ? 18.f : 22.f;
 
-        float jumpDist = ups * JUMP_TIME;
-
-        // Pinchos: saltar para que el arco quede centrado sobre el grupo
-        float look = jumpDist + 120.f;
-        Cluster c = findCluster(d.hazards, px, py, look, 45.f);
-        if (c.found) {
-            float width = c.end - c.start;
-            float center = (c.start + c.end) * 0.5f;
-            if (p->m_isBall || p->m_isSpider) {
-                float dist = c.start - (px + HALF);
-                if (dist <= ups * 0.10f) {
-                    // cambiar de lado solo si el otro lado esta libre (o ya no queda tiempo)
-                    if (oppositeBlocked(d, px, py, ups) && dist > ups * 0.03f) return false;
+            float jumpDist = ups * JUMP_TIME;
+            float look = jumpDist + 120.f;
+            Cluster c = findCluster(d.hazards, px, qy, look, 45.f, below, above);
+            if (c.found) {
+                float width = c.end - c.start;
+                float center = (c.start + c.end) * 0.5f;
+                if (q->m_isBall || q->m_isSpider) {
+                    float dist = c.start - (px + HALF);
+                    if (dist <= ups * 0.10f) {
+                        // cambiar de lado solo si el otro lado esta libre (o ya no queda tiempo)
+                        if (oppositeBlocked(d, px, qy, ups) && dist > ups * 0.03f) return false;
+                        return true;
+                    }
+                } else if (width > jumpDist * 0.75f) {
+                    if (c.start - (px + HALF) <= jumpDist * 0.30f) return true;
+                } else if (center - px <= jumpDist * 0.5f) {
                     return true;
                 }
-            } else if (width > jumpDist * 0.75f) {
-                if (c.start - (px + HALF) <= jumpDist * 0.30f) return true;
-            } else if (center - px <= jumpDist * 0.5f) {
-                return true;
             }
+            return wallAhead(d, px, qy, ups * 0.07f);
+        };
+
+        if (evalFor(p)) return true;
+
+        auto q2 = opts.p2;
+        if (opts.dual && q2 && q2 != p && !q2->m_isShip && !q2->m_isBird && !q2->m_isDart && !q2->m_isSwing) {
+            return evalFor(q2);
         }
-
-        // Paredes: saltar justo antes de chocar
-        if (wallAhead(d, px, py, ups * 0.07f)) return true;
-
         return false;
     }
 
