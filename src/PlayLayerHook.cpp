@@ -879,6 +879,7 @@ class $modify(ACBase, GJBaseGameLayer) {
             acgdl::Humanizer hm = g.hum;
             acgdl::BotMemory mem = g.mem;
             acgdl::DecideOpts oo = o;
+            oo.steps = 1; // dentro del simulador cada decision es de un paso
             bool last = h0;
             acts.assign(static_cast<size_t>(n), 0);
             return acgdl::traj::simulate(pl, p, n, stopX, [&](int i, PlayerObject* f) {
