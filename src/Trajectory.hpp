@@ -19,6 +19,7 @@ namespace acgdl::traj {
     // true mientras se simula (para que los hooks no toquen el nivel real)
     bool active();
     void markDeath();
+    bool orbsAllowed();
 
     float stepDelta();
     void setDelta(float dt);
@@ -31,7 +32,9 @@ namespace acgdl::traj {
         PlayLayer* pl, PlayerObject* real, int n, float maxX,
         std::function<bool(int step, PlayerObject* fake)> const& holdAt,
         bool startHolding = false,
-        std::vector<cocos2d::CCPoint>* path = nullptr
+        std::vector<cocos2d::CCPoint>* path = nullptr,
+        std::vector<GameObject*> const* touchables = nullptr,
+        bool allowOrbs = false
     );
 
 }

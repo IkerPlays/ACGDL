@@ -23,7 +23,13 @@ namespace acgdl {
         std::vector<Box> solids;  // bloques
         std::vector<Box> orbs;    // orbes (hay que pulsar encima)
         std::vector<Box> pads;    // pads (se activan solos)
-        std::vector<Stop> stops;  // ordenados por minX
+        std::vector<Stop> stops;        // portales + orbes + pads, ordenados por minX
+        std::vector<Stop> portalStops;  // solo portales
+        std::vector<GameObject*> orbObjs; // paralelo a orbs
+        std::vector<GameObject*> padObjs; // paralelo a pads
+        int slopes = 0;
+        int animatedHazards = 0;
+        std::string typeReport;           // recuento por tipo de objeto (para el log)
         float maxHazardW = 0.f;
         float maxSolidW = 0.f;
         float endX = 1.f;
@@ -32,6 +38,10 @@ namespace acgdl {
 
         std::string summary() const;
     };
+
+    bool isOrbType(GameObjectType t);
+    bool isPadType(GameObjectType t);
+    char const* typeName(int type);
 
     // Lee todos los objetos del nivel y los clasifica.
     LevelData scanLevel(GJBaseGameLayer* layer);

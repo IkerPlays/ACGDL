@@ -1,4 +1,7 @@
 #include "Trajectory.hpp"
+#include "LevelScanner.hpp"
+
+#include <Geode/modify/RingObject.hpp>
 
 #include <Geode/modify/EffectGameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
@@ -15,6 +18,7 @@ namespace acgdl::traj {
         PlayerCheckpoint* s_cp = nullptr;
         bool s_active = false;
         bool s_cancel = false;
+        bool s_allowOrbs = false;
         float s_delta = 0.25f; // en GD 2.2 el jugador se actualiza en unidades de frame a 60 fps (0.25 = un paso a 240 Hz)
     }
 
@@ -23,6 +27,7 @@ namespace acgdl::traj {
     float stepDelta() { return s_delta; }
     void setDelta(float dt) { if (dt > 0.f && dt < 4.f) s_delta = dt; }
     void markDeath() { s_cancel = true; }
+    bool orbsAllowed() { return s_allowOrbs; }
 
     void reset() {
         s_active = false;
@@ -68,11 +73,37 @@ namespace acgdl::traj {
         PlayLayer* pl, PlayerObject* real, int n, float maxX,
         std::function<bool(int, PlayerObject*)> const& holdAt,
         bool startHolding,
-        std::vector<cocos2d::CCPoint>* path
+        std::vector<cocos2d::CCPoint>* path,
+        std::vector<GameObject*> const* touchables,
+        bool allowOrbs
     ) {
         SimResult res;
         if (!ready() || !pl || !real) return res;
 
+        // los orbes y pads tocados por el jugador falso marcan flags en el objeto real: se restauran al acabar
+        struct Saved {
+            GameObject* obj;
+            bool isActivated;
+            bool effect;
+            bool activated, p1, p2;
+        };
+        std::vector<Saved> saved;
+        if (allowOrbs && touchables) {
+            saved.reserve(touchables->size());
+            for (auto o : *touchables) {
+                if (!o) continue;
+                Saved sv{o, o->m_isActivated, false, false, false, false};
+                if (auto e = typeinfo_cast<EffectGameObject*>(o)) {
+                    sv.effect = true;
+                    sv.activated = e->m_activated;
+                    sv.p1 = e->m_activatedByPlayer1;
+                    sv.p2 = e->m_activatedByPlayer2;
+                }
+                saved.push_back(sv);
+            }
+        }
+
+        s_allowOrbs = allowOrbs;
         s_active = true;
         s_cancel = false;
 
@@ -124,6 +155,17 @@ namespace acgdl::traj {
         res.end = s_fake->getPosition();
         s_fake->releaseButton(PlayerButton::Jump);
         s_active = false;
+        s_allowOrbs = false;
+
+        for (auto& sv : saved) {
+            sv.obj->m_isActivated = sv.isActivated;
+            if (sv.effect) {
+                auto e = static_cast<EffectGameObject*>(sv.obj);
+                e->m_activated = sv.activated;
+                e->m_activatedByPlayer1 = sv.p1;
+                e->m_activatedByPlayer2 = sv.p2;
+            }
+        }
         return res;
     }
 
@@ -140,6 +182,9 @@ class $modify(ACTrajBase, GJBaseGameLayer) {
                 auto t = obj->m_objectType;
                 bool keep = t == GameObjectType::Solid || t == GameObjectType::Hazard ||
                             t == GameObjectType::Slope || t == GameObjectType::AnimatedHazard;
+                if (!keep && acgdl::traj::orbsAllowed()) {
+                    keep = acgdl::isOrbType(t) || acgdl::isPadType(t);
+                }
                 if (keep) continue;
                 if (obj->m_isDisabled || obj->m_isDisabled2) continue;
                 disabled.push_back(obj);
@@ -162,7 +207,11 @@ class $modify(ACTrajBase, GJBaseGameLayer) {
     }
 
     void playerTouchedRing(PlayerObject* p0, RingObject* p1) {
-        if (!acgdl::traj::active()) GJBaseGameLayer::playerTouchedRing(p0, p1);
+        if (!acgdl::traj::active() || acgdl::traj::orbsAllowed()) GJBaseGameLayer::playerTouchedRing(p0, p1);
+    }
+
+    void gameEventTriggered(GJGameEvent p0, int p1, int p2) {
+        if (!acgdl::traj::active()) GJBaseGameLayer::gameEventTriggered(p0, p1, p2);
     }
 
     void playerTouchedTrigger(PlayerObject* p0, EffectGameObject* p1) {
@@ -185,7 +234,11 @@ class $modify(ACTrajPlayer, PlayerObject) {
     }
 
     void ringJump(RingObject* p0, bool p1) {
-        if (!acgdl::traj::active()) PlayerObject::ringJump(p0, p1);
+        if (!acgdl::traj::active() || acgdl::traj::orbsAllowed()) PlayerObject::ringJump(p0, p1);
+    }
+
+    void spawnCircle() {
+        if (!acgdl::traj::active()) PlayerObject::spawnCircle();
     }
 };
 
@@ -204,5 +257,11 @@ class $modify(ACTrajObject, GameObject) {
 class $modify(ACTrajEffect, EffectGameObject) {
     void triggerObject(GJBaseGameLayer* p0, int p1, std::vector<int> const* p2) {
         if (!acgdl::traj::active()) EffectGameObject::triggerObject(p0, p1, p2);
+    }
+};
+
+class $modify(ACTrajRing, RingObject) {
+    void spawnCircle() {
+        if (!acgdl::traj::active()) RingObject::spawnCircle();
     }
 };
