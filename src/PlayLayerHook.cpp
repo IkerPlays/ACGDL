@@ -55,6 +55,9 @@ namespace {
         int perP = 8;
         int perD = 4;
         int perPhase = 0;
+        uint32_t orbSeed = 0;
+        int orbSkipPct = 0;
+        int orbDelay = 0;
         std::deque<uint8_t> hist;
         uint32_t rng = 0x9E3779B9u;
 
@@ -116,10 +119,16 @@ namespace {
         }
     }
 
+    // Longitud real del nivel segun el juego (el porcentaje de GD es x / longitud).
+    float levelLen(PlayLayer* pl) {
+        float len = pl->m_levelLength;
+        return len > 100.f ? len : std::max(1.f, g.data.endX);
+    }
+
     void updatePercent(PlayLayer* pl) {
         if (!pl->m_player1) return;
         float x = pl->m_player1->getPositionX();
-        acgdl::stats().percent = std::clamp(x / std::max(1.f, g.data.endX) * 100.f, 0.f, 100.f);
+        acgdl::stats().percent = std::clamp(x / levelLen(pl) * 100.f, 0.f, 100.f);
     }
 
     void restartClean(PlayLayer* pl) {
@@ -410,6 +419,9 @@ class $modify(ACBase, GJBaseGameLayer) {
         int back = std::min(g.fails / 6, 16);
         g.mutBase = target;
         g.mutType = static_cast<int>(nextRand() % 12);
+        g.orbSeed = nextRand();
+        g.orbSkipPct = (nextRand() % 3 == 0) ? 0 : static_cast<int>(nextRand() % 70);
+        g.orbDelay = (nextRand() % 2 == 0) ? 0 : static_cast<int>(nextRand() % 10);
         g.mutFlip = false;
         g.pulseLeft = 0;
         g.mutDelay = 4 + static_cast<int>(nextRand() % 25);
@@ -490,6 +502,11 @@ class $modify(ACBase, GJBaseGameLayer) {
         acgdl::DecideOpts o;
         o.wasHolding = g.holding;
         o.ignoreOrbs = g.mutLeft > 0 && g.mutType == 4;
+        if (g.mutLeft > 0) {
+            o.orbSeed = g.orbSeed;
+            o.orbSkipPct = g.orbSkipPct;
+            o.orbDelay = g.orbDelay;
+        }
         o.dual = pl->m_gameState.m_isDualMode;
         o.p2 = pl->m_player2;
         bool want = acgdl::decideHold(p, g.data, g.mem, g.step, o);
@@ -693,7 +710,7 @@ class $modify(ACBase, GJBaseGameLayer) {
                      std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 0.012);
 
             if (g.phase == PH_SOLVE || g.phase == PH_REPLAY) {
-                st.percent = std::clamp(g.bestX / std::max(1.f, g.data.endX) * 100.f, 0.f, 100.f);
+                st.percent = std::clamp(g.bestX / levelLen(pl) * 100.f, 0.f, 100.f);
                 st.attempts = g.totalFails;
                 st.checkpoints = static_cast<int>(g.cpStep.size());
                 st.steps = g.step;

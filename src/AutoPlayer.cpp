@@ -64,16 +64,16 @@ namespace acgdl {
             return false;
         }
 
-        bool orbUnderPlayer(LevelData const& d, float px, float py) {
+        int orbUnderPlayer(LevelData const& d, float px, float py) {
             float lo = px - 70.f;
             for (size_t i = firstFrom(d.orbs, lo); i < d.orbs.size(); i++) {
                 Box const& o = d.orbs[i];
                 if (o.minX > px + 70.f) break;
                 bool hitX = px + HALF >= o.minX - 10.f && px - HALF <= o.maxX + 10.f;
                 bool hitY = py + HALF >= o.minY - 10.f && py - HALF <= o.maxY + 10.f;
-                if (hitX && hitY) return true;
+                if (hitX && hitY) return static_cast<int>(i);
             }
-            return false;
+            return -1;
         }
 
         // Altura objetivo para modos de vuelo: pasillo libre entre obstaculos cercanos.
@@ -108,6 +108,117 @@ namespace acgdl {
     }
 
     namespace {
+
+        // Planificador de vuelo (nave, wave, ufo, swing): busca un camino libre entre
+        // pinchos y bloques en una rejilla por delante y devuelve la altura objetivo.
+        bool planPath(LevelData const& d, float px, float py, float ups, float& outY) {
+            constexpr float DX = 15.f;
+            constexpr float DY = 15.f;
+            constexpr float BOX = 13.f;
+            constexpr int R = 41;
+            constexpr int MID = 20;
+            constexpr int MAXC = 28;
+
+            int cols = std::clamp(static_cast<int>(std::ceil(ups * 0.65f / DX)), 8, MAXC);
+            float xmin = px - BOX;
+            float xmax = px + cols * DX + BOX;
+            float ymin = py - MID * DY - BOX;
+            float ymax = py + MID * DY + BOX;
+
+            static std::vector<Box> nearBoxes;
+            nearBoxes.clear();
+            auto gather = [&](std::vector<Box> const& v, float maxW) {
+                for (size_t i = firstFrom(v, xmin - maxW); i < v.size(); i++) {
+                    Box const& b = v[i];
+                    if (b.minX > xmax) break;
+                    if (b.maxX < xmin) continue;
+                    if (b.maxY < ymin || b.minY > ymax) continue;
+                    nearBoxes.push_back(b);
+                }
+            };
+            gather(d.hazards, d.maxHazardW);
+            gather(d.solids, d.maxSolidW);
+
+            static bool blocked[MAXC + 1][R];
+            static bool reach[MAXC + 1][R];
+            static bool via[MAXC + 1][R];
+
+            for (int c = 0; c <= cols; c++) {
+                float cx = px + c * DX;
+                for (int r = 0; r < R; r++) {
+                    float cy = py + (r - MID) * DY;
+                    bool bl = (cy - BOX < 0.f); // suelo
+                    if (!bl) {
+                        for (auto const& b : nearBoxes) {
+                            if (b.maxX > cx - BOX && b.minX < cx + BOX &&
+                                b.maxY > cy - BOX && b.minY < cy + BOX) {
+                                bl = true;
+                                break;
+                            }
+                        }
+                    }
+                    blocked[c][r] = bl;
+                    reach[c][r] = false;
+                    via[c][r] = false;
+                }
+            }
+
+            reach[0][MID] = true;
+            for (int c = 1; c <= cols; c++) {
+                for (int r = 0; r < R; r++) {
+                    if (blocked[c][r]) continue;
+                    if (reach[c - 1][r] || (r > 0 && reach[c - 1][r - 1]) || (r < R - 1 && reach[c - 1][r + 1])) {
+                        reach[c][r] = true;
+                    }
+                }
+            }
+
+            int end = cols;
+            while (end > 0) {
+                bool any = false;
+                for (int r = 0; r < R; r++) {
+                    if (reach[end][r]) { any = true; break; }
+                }
+                if (any) break;
+                end--;
+            }
+            if (end == 0) return false;
+
+            for (int r = 0; r < R; r++) via[end][r] = reach[end][r];
+            for (int c = end - 1; c >= 0; c--) {
+                for (int r = 0; r < R; r++) {
+                    via[c][r] = reach[c][r] &&
+                        (via[c + 1][r] || (r > 0 && via[c + 1][r - 1]) || (r < R - 1 && via[c + 1][r + 1]));
+                }
+            }
+
+            int m = std::min(end, 3);
+            int best = -1;
+            int bestScore = -1000000;
+            for (int r = 0; r < R; r++) {
+                if (!via[m][r]) continue;
+                int clearance = 0;
+                for (int k = -4; k <= 4; k++) {
+                    int rr = r + k;
+                    if (rr >= 0 && rr < R && via[m][rr]) clearance++;
+                }
+                int score = clearance * 10 - std::abs(r - MID);
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = r;
+                }
+            }
+            if (best < 0) return false;
+            outY = py + (best - MID) * DY;
+            return true;
+        }
+
+        float flyTarget(LevelData const& d, float px, float py, float ups) {
+            float target;
+            if (planPath(d, px, py, ups, target)) return target;
+            bool bounded;
+            return corridorTarget(d, px, py, ups * 0.4f, bounded);
+        }
 
         // Pasillo del jugador: suelo y techo mas cercanos por delante.
         bool corridorBounds(LevelData const& d, float px, float py, float look, float& low, float& high) {
@@ -162,16 +273,14 @@ namespace acgdl {
 
         // ---- Wave: mantener la altura del pasillo ----
         if (p->m_isDart) {
-            bool bounded;
-            float target = corridorTarget(d, px, py, ups * 0.35f, bounded);
+            float target = flyTarget(d, px, py, ups);
             bool wantUp = py < target - 2.f;
             return flipped ? !wantUp : wantUp;
         }
 
         // ---- Nave: control con prediccion de velocidad ----
         if (p->m_isShip) {
-            bool bounded;
-            float target = corridorTarget(d, px, py, ups * 0.45f, bounded);
+            float target = flyTarget(d, px, py, ups);
             float pred = py + vy * 30.f;
             bool wantUp = pred < target;
             return flipped ? !wantUp : wantUp;
@@ -179,8 +288,7 @@ namespace acgdl {
 
         // ---- UFO: toques repetidos (30 por segundo) ----
         if (p->m_isBird) {
-            bool bounded;
-            float target = corridorTarget(d, px, py, ups * 0.45f, bounded);
+            float target = flyTarget(d, px, py, ups);
             float pred = py + vy * 30.f;
             bool need = flipped ? (pred > target + 8.f) : (pred < target - 8.f);
             return need && (step % 8 < 2);
@@ -188,8 +296,7 @@ namespace acgdl {
 
         // ---- Swing: cambia de direccion al acercarse a los limites ----
         if (p->m_isSwing) {
-            bool bounded;
-            float target = corridorTarget(d, px, py, ups * 0.45f, bounded);
+            float target = flyTarget(d, px, py, ups);
             bool goingUp = vy > 0.f;
             float pred = py + vy * 30.f;
             bool needFlip = goingUp ? pred > target + 30.f : pred < target - 30.f;
@@ -198,14 +305,26 @@ namespace acgdl {
 
         // ---- Cubo / bola / robot / spider ----
 
-        // Orbes: hay que SOLTAR y volver a PULSAR al entrar (flanco de pulsacion)
+        // Orbes: hay que SOLTAR y volver a PULSAR al entrar (flanco de pulsacion).
+        // La busqueda puede ignorar algunos orbes o esperar dentro del orbe antes de pulsar.
         if (!opts.ignoreOrbs) {
-            if (orbUnderPlayer(d, px, py)) {
+            int oi = orbUnderPlayer(d, px, py);
+            if (oi >= 0 && opts.orbSkipPct > 0) {
+                uint32_t h = (static_cast<uint32_t>(oi) * 2654435761u) ^ opts.orbSeed;
+                h ^= h >> 15;
+                h *= 2246822519u;
+                h ^= h >> 13;
+                if (static_cast<int>(h % 100u) < opts.orbSkipPct) oi = -1;
+            }
+            if (oi >= 0) {
                 if (!mem.inOrb) {
                     mem.inOrb = true;
                     mem.pressedOrb = false;
+                    mem.orbSteps = 0;
                 }
+                mem.orbSteps++;
                 if (!mem.pressedOrb) {
+                    if (mem.orbSteps <= opts.orbDelay) return false;
                     if (opts.wasHolding) return false; // soltar primero
                     mem.pressedOrb = true;
                     return true;
@@ -214,6 +333,7 @@ namespace acgdl {
             }
             mem.inOrb = false;
             mem.pressedOrb = false;
+            mem.orbSteps = 0;
         }
 
         // Evalua pinchos y paredes para un jugador (en dual un clic afecta a los dos).
