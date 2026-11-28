@@ -26,6 +26,10 @@ Con el **simulador de trayectoria** (la técnica de los mods *Show Trajectory*) 
 | Entradas humanas | Pulsaciones y pausas con duración mínima, sin temblor |
 | Dibujar hitboxes | Depuración: hitboxes que ve el bot y la trayectoria prevista |
 
+## Macros
+
+Si dejas un macro del nivel (`.gdr` de xdBot/zBot/MegaHack o `.gdr2` de Eclipse) en la carpeta `macros` del mod (la ruta sale en el log de Geode), o ya está en las carpetas de Eclipse o xdBot, el bot lo usa como **solución inicial**: lo repite en segundo plano, prueba varios desfases de frame, comprueba que sigue funcionando en tu versión del juego y repara solo los tramos que fallen.
+
 ## Compilar
 
 El workflow de GitHub Actions compila para Windows, macOS, iOS, Android32 y Android64 y publica un release con el `.geode` (la versión sale de `mod.json`).
@@ -33,6 +37,8 @@ El workflow de GitHub Actions compila para Windows, macOS, iOS, Android32 y Andr
 ## Herramientas
 
 `tools/analyze_gmd.py nivel.gmd` lista los modos de juego, orbes, pads y velocidades de un nivel exportado con GDShare.
+
+`tools/analyze_macro.py macro.gdr2 [--gmd nivel.gmd]` mide cómo pulsa una persona (duración de pulsaciones y pausas, por modo de juego si el macro trae posiciones). Los tiempos mínimos de las *entradas humanas* están calibrados con macros reales.
 
 ## Limitaciones
 
